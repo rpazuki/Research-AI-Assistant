@@ -1,0 +1,38 @@
+# Environment
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+out/
+frontend/.next/
+
+# Data / models (large files — store separately)
+data/
+model_cache/
+*.jsonl.bak
+pubmed_*.json
+pubmed_*.jsonl
+
+# Evaluation reports (keep structure, ignore generated reports)
+evaluation/reports/*.json
+evaluation/reports/*.jsonl
+
+# Pipeline checkpoints (regenerable)
+pipelines/data/checkpoints/
+
+# Docker
+*.log

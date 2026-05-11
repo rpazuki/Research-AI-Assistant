@@ -1,0 +1,53 @@
+version: "3.9"
+
+services:
+  # ── Postgres + pgvector ──────────────────────────────────────────────────
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: rlalab_db
+    environment:
+      POSTGRES_DB: rlalab_ai
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d rlalab_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── FastAPI backend ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rlalab_backend
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - model_cache:/app/model_cache   # Persistent volume for embedding model weights
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ── Next.js frontend ──────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rlalab_frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  model_cache:

@@ -1,0 +1,23 @@
+"""
+app/embeddings/base.py
+-----------------------
+Abstract interface for embedding models.
+All implementations must be registered in embeddings/registry.py.
+"""
+
+from abc import ABC, abstractmethod
+
+
+class EmbeddingModel(ABC):
+    model_name: str
+    dimensions: int
+
+    @abstractmethod
+    def embed_query(self, text: str) -> list[float]:
+        """Embed a single query string. Used at query time."""
+        ...
+
+    @abstractmethod
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Embed a batch of documents. Used at indexing time."""
+        ...
