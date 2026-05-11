@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+html,
+body {
+  height: 100%;
+}
+
+/* Thin scrollbar for chat sidebar and source panel */
+::-webkit-scrollbar {
+  width: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 9999px;
+}
+
+/* Cursor blink animation used by streaming indicator */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-blink {
+  animation: blink 1s step-start infinite;
+}
