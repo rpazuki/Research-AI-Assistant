@@ -26,10 +26,9 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const result = await login(email, password);
-      // TODO: Replace with next-auth session storage
-      localStorage.setItem("rlalab_token", result.access_token);
+      await login(email, password);
       router.push("/chat");
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

@@ -57,6 +57,10 @@ class Deduplicator:
         """Pre-populate with PMIDs already in the database (for incremental runs)."""
         self._seen_pmids.update(pmids)
 
+    def load_existing_doc_ids(self, doc_ids: list[str]) -> None:
+        """Pre-populate with document IDs already in the database."""
+        self._seen_doc_ids.update(doc_ids)
+
 
 def _normalize_title(title: str) -> str:
     """

@@ -95,6 +95,7 @@ export interface JournalDataPoint {
 
 export interface CorpusStats {
   document_count: number;
+  chunk_count: number;
   year_min: number | null;
   year_max: number | null;
   last_ingestion: string | null;

@@ -1,5 +1,8 @@
 import { redirect } from "next/navigation";
 
-export default function RootPage() {
-  redirect("/chat");
+import { getAuthToken } from "@/lib/auth";
+
+export default async function RootPage() {
+  const token = await getAuthToken();
+  redirect(token ? "/chat" : "/login");
 }

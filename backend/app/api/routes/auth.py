@@ -37,6 +37,12 @@ async def login(body: LoginRequest, db: DBSession) -> TokenResponse:
     )
 
 
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout() -> None:
+    """JWT logout is handled client-side by deleting the stored token."""
+    return None
+
+
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: CurrentUser) -> UserResponse:
     """Return the currently authenticated user's profile."""

@@ -60,3 +60,51 @@ docker-compose.prod.yml                 (new)
 - IVFFlat index on `document_chunks.embedding` must be created manually after first ingestion (see CLAUDE.md §17)
 - `pipelines/ingestion/pmc_fulltext.py` full JATS XML parsing is a stub — raw XML returned as `full_text`; section extraction not yet implemented
 - Frontend `npm install` not yet run (no Node on path at session time was not checked — run manually)
+
+---
+
+## Session continuation: 2026-05-11
+
+### What was done
+
+#### Frontend
+- Replaced browser `localStorage` token storage with a Next.js auth proxy:
+  - Added `/api/auth/login` route handler to exchange credentials for a backend JWT and store it in an `httpOnly` cookie
+  - Added `/api/auth/logout` route handler to clear the cookie
+  - Added `/api/backend/[...path]` proxy route so authenticated frontend requests are forwarded to FastAPI with the bearer token injected server-side
+- Refactored `frontend/src/lib/api.ts` to call the proxy layer instead of reading a token in the browser
+- Replaced the old chat page implementation with a shared `ChatClient` component and added `/chat/[sessionId]` so historical sessions now restore correctly
+- Added sign-out handling in the chat UI and updated the root page to redirect based on cookie presence instead of blindly redirecting to `/chat`
+- Expanded the analytics page to show chunk counts, MeSH terms, and topic distribution in addition to the existing temporal and journal views
+- Removed the stale `next-auth` dependency entry from `frontend/package.json` because the app no longer uses it and the pinned version did not resolve from npm
+
+#### Backend
+- Added `POST /api/v1/auth/logout` as a 204 no-op endpoint so the API surface matches the frontend logout flow
+- Expanded analytics with:
+  - `chunk_count` in `/analytics/corpus_stats`
+  - `/analytics/topics` endpoint using keywords with MeSH fallback
+- Added request-level validation for feedback ratings (`1..5`)
+- Aligned the embedding abstraction with actual usage by adding async wrapper methods to the base embedding interface
+- Tightened retry behavior so the resilience layer retries transient API/network faults instead of retrying arbitrary exceptions
+- Decorated Anthropic streaming calls with the retry policy
+- Persisted more assistant-message metadata from the chat pipeline: retrieved chunk IDs, model name, sources, and latency
+
+#### Pipelines and evaluation
+- Completed incremental PubMed ingestion support:
+  - incremental runs now build date-bounded year queries
+  - incremental checkpoints are scoped by date
+  - incremental builds preload existing PMIDs from the database and skip them
+- Added exact-year support for `--year`
+- Made indexing idempotent for repeated document updates by replacing existing chunk rows for the active embedding model before re-inserting
+- Added an explicit index-model guard so non-768 embedding models are rejected for persistent indexing until the schema supports multiple vector dimensions
+- Replaced the placeholder RAG evaluation path with actual SSE consumption, storing streamed responses, sources, and latencies in the report output
+
+#### Validation
+- Installed backend dependencies with `pip install -e '.[dev]'`
+- Installed frontend dependencies with `npm install`
+- Ran backend tests: `6 passed`
+- Ran frontend type check: `npm run type-check` passed
+
+### Remaining notable limitations
+- `pipelines/ingestion/pmc_fulltext.py` full JATS XML parsing is still incomplete
+- Persistent multi-embedding indexing is still not implemented; the code now fails fast instead of pretending otherwise

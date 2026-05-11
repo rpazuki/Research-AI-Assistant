@@ -60,6 +60,7 @@ class AnthropicProvider(LLMProvider):
         )
         return text, usage
 
+    @llm_retry
     async def stream(
         self,
         system: str,

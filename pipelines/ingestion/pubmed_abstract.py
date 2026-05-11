@@ -124,7 +124,10 @@ class PubMedAbstractIngester(BaseIngester):
         """Collect all PMIDs for the configured query, splitting by year."""
         all_pmids: list[str] = []
         for year in range(self.year_from, self.year_to + 1):
-            checkpoint_file = self.checkpoint_dir / f"pmids_{year}.json"
+            if self.incremental_from and year < self.incremental_from.year:
+                continue
+
+            checkpoint_file = self._checkpoint_file_for_year(year)
             if checkpoint_file.exists():
                 with open(checkpoint_file) as f:
                     year_pmids = json.load(f)
@@ -132,7 +135,7 @@ class PubMedAbstractIngester(BaseIngester):
                 all_pmids.extend(year_pmids)
                 continue
 
-            year_query = self.query + f" AND {year}[PDAT]"
+            year_query = self._build_year_query(year)
             count_record = self._safe_esearch(year_query, retmax=1)
             total = int(count_record.get("Count", 0))
             if total == 0:
@@ -152,6 +155,24 @@ class PubMedAbstractIngester(BaseIngester):
             all_pmids.extend(year_pmids)
 
         return all_pmids
+
+    def _checkpoint_file_for_year(self, year: int) -> Path:
+        if self.incremental_from is None:
+            return self.checkpoint_dir / f"pmids_{year}.json"
+        return self.checkpoint_dir / f"pmids_{year}_{self.incremental_from.isoformat()}.json"
+
+    def _build_year_query(self, year: int) -> str:
+        year_query = f"({self.query}) AND {year}[PDAT]"
+        if self.incremental_from is None:
+            return year_query
+
+        start_date = self.incremental_from if year == self.incremental_from.year else date(year, 1, 1)
+        end_date = date.today() if year == date.today().year else date(year, 12, 31)
+        return (
+            year_query
+            + f' AND ("{start_date.isoformat()}"[Date - Publication] : '
+            + f'"{end_date.isoformat()}"[Date - Publication])'
+        )
 
     def _safe_esearch(self, term: str, retstart: int = 0, retmax: int = 1) -> dict:
         """Entrez esearch with retry."""

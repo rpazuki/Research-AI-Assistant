@@ -18,6 +18,7 @@ from http.client import IncompleteRead, RemoteDisconnected
 
 from tenacity import (
     retry,
+    retry_if_exception,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
@@ -44,7 +45,7 @@ def _is_llm_retryable(exc: BaseException) -> bool:
 llm_retry = retry(
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
-    retry=retry_if_exception_type(Exception),  # refined by _is_llm_retryable check inside
+    retry=retry_if_exception(_is_llm_retryable),
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
@@ -55,7 +56,7 @@ llm_retry = retry(
 pubmed_retry = retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=1, max=20),
-    retry=retry_if_exception_type((IncompleteRead, RemoteDisconnected, OSError, Exception)),
+    retry=retry_if_exception_type((IncompleteRead, RemoteDisconnected, OSError)),
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
@@ -63,10 +64,21 @@ pubmed_retry = retry(
 # ── Generic HTTP retry ────────────────────────────────────────────────────────
 # For any httpx-based external call.
 
-http_retry = retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
-    retry=retry_if_exception_type(Exception),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    reraise=True,
-)
+try:
+    import httpx
+
+    http_retry = retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.RequestError, httpx.TimeoutException)),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+except ImportError:  # pragma: no cover - dependency is available in normal runtime
+    http_retry = retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(OSError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )

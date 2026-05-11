@@ -16,41 +16,44 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { getCorpusStats, getTemporalData, getJournals } from "@/lib/api";
+import {
+  getCorpusStats,
+  getJournals,
+  getMeshTerms,
+  getTemporalData,
+  getTopics,
+} from "@/lib/api";
 import type { CorpusStats, TemporalDataPoint, JournalDataPoint } from "@/types";
-
-function getToken(): string | null {
-  if (typeof window !== "undefined") {
-    return localStorage.getItem("rlalab_token");
-  }
-  return null;
-}
 
 export default function AnalyticsPage() {
   const router = useRouter();
   const [stats, setStats] = useState<CorpusStats | null>(null);
   const [temporal, setTemporal] = useState<TemporalDataPoint[]>([]);
   const [journals, setJournals] = useState<JournalDataPoint[]>([]);
+  const [meshTerms, setMeshTerms] = useState<Array<{ term: string; count: number }>>([]);
+  const [topics, setTopics] = useState<Array<{ topic: string; count: number }>>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-
     async function load() {
       try {
-        const [s, t, j] = await Promise.all([
-          getCorpusStats(token!),
-          getTemporalData(token!),
-          getJournals(token!, 15),
+        const [s, t, j, mesh, topicData] = await Promise.all([
+          getCorpusStats(),
+          getTemporalData(),
+          getJournals(15),
+          getMeshTerms(12),
+          getTopics(12),
         ]);
         setStats(s);
         setTemporal(t);
         setJournals(j);
+        setMeshTerms(mesh);
+        setTopics(topicData);
       } catch (err) {
+        if (err instanceof Error && err.message === "Unauthorized") {
+          router.push("/login");
+          return;
+        }
         setError(err instanceof Error ? err.message : "Failed to load analytics");
       }
     }
@@ -83,8 +86,9 @@ export default function AnalyticsPage() {
 
         {/* Stats cards */}
         {stats && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             <StatCard label="Documents" value={stats.document_count.toLocaleString()} />
+            <StatCard label="Chunks" value={stats.chunk_count.toLocaleString()} />
             <StatCard
               label="Year range"
               value={
@@ -157,6 +161,35 @@ export default function AnalyticsPage() {
                   </div>
                 );
               })}
+            </div>
+          </section>
+        )}
+
+        {(meshTerms.length > 0 || topics.length > 0) && (
+          <section className="grid gap-6 lg:grid-cols-2">
+            <div className="bg-white rounded-xl border p-6">
+              <h2 className="text-sm font-semibold text-gray-700 mb-4">Top MeSH Terms</h2>
+              <div className="flex flex-wrap gap-2">
+                {meshTerms.map((term) => (
+                  <span
+                    key={term.term}
+                    className="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700"
+                  >
+                    {term.term} ({term.count})
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="bg-white rounded-xl border p-6">
+              <h2 className="text-sm font-semibold text-gray-700 mb-4">Topic Distribution</h2>
+              <div className="space-y-2">
+                {topics.map((topic) => (
+                  <div key={topic.topic} className="flex items-center justify-between gap-4 text-sm">
+                    <span className="text-gray-700 truncate">{topic.topic}</span>
+                    <span className="text-gray-500">{topic.count}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
         )}

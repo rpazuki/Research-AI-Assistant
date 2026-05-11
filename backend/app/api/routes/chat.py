@@ -104,6 +104,7 @@ async def post_message(
         full_response = []
         final_sources = []
         chunk_ids = []
+        llm_model = None
 
         try:
             async for event_type, data, sources in run_rag_stream(
@@ -126,14 +127,19 @@ async def post_message(
                     yield f"data: {payload}\n\n"
 
                 elif event_type == "done":
-                    latency_ms = int((time.monotonic() - t0) * 1000)
+                    payload_data = data if isinstance(data, dict) else {}
+                    latency_ms = int(payload_data.get("latency_ms", int((time.monotonic() - t0) * 1000)))
+                    chunk_ids = payload_data.get("retrieved_chunk_ids", [])
+                    llm_model = payload_data.get("llm_model")
                     # Save assistant message
                     msg = await crud.create_chat_message(
                         db,
                         session_id=session.id,
                         role="assistant",
                         content="".join(full_response),
+                        retrieved_chunks=chunk_ids,
                         sources=[s.model_dump() for s in final_sources],
+                        llm_model=llm_model,
                         latency_ms=latency_ms,
                     )
                     payload = json.dumps(

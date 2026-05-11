@@ -47,7 +47,7 @@ async def run_rag_stream(
     llm_provider: LLMProvider,
     top_k: int | None = None,
     filters: dict | None = None,
-) -> AsyncIterator[tuple[str, str, list[SourceSchema] | None]]:
+) -> AsyncIterator[tuple[str, object | None, list[SourceSchema] | None]]:
     """
     Stream RAG results as (event_type, data, sources) tuples.
 
@@ -103,7 +103,15 @@ async def run_rag_stream(
             chunks_retrieved=len(chunks),
             latency_ms=latency_ms,
         )
-        yield ("done", None, None)
+        yield (
+            "done",
+            {
+                "retrieved_chunk_ids": [str(chunk.chunk_id) for chunk in chunks],
+                "llm_model": getattr(llm_provider, "model", None),
+                "latency_ms": latency_ms,
+            },
+            None,
+        )
 
     except Exception as exc:
         log.error("rag_stream_error", error=str(exc))

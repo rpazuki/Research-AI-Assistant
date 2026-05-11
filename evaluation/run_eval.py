@@ -26,6 +26,30 @@ REPORTS_DIR = Path(__file__).parent / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
 
 
+def _parse_sse_stream(response: httpx.Response) -> tuple[str, list[dict], int | None]:
+    answer_parts: list[str] = []
+    sources: list[dict] = []
+    latency_ms: int | None = None
+
+    for line in response.iter_lines():
+        if not line or not line.startswith("data: "):
+            continue
+
+        payload = json.loads(line[6:])
+        event_type = payload.get("type")
+        if event_type == "token":
+            answer_parts.append(payload.get("data", ""))
+        elif event_type == "sources":
+            sources = payload.get("data", [])
+        elif event_type == "done":
+            latency_ms = payload.get("latency_ms")
+            break
+        elif event_type == "error":
+            raise RuntimeError(payload.get("message", "Unknown SSE error"))
+
+    return "".join(answer_parts), sources, latency_ms
+
+
 def load_questions(question_id: str | None = None) -> list[dict]:
     questions = []
     with open(BENCHMARK_FILE) as f:
@@ -132,19 +156,32 @@ def run_rag_eval(questions: list[dict], api_url: str, token: str) -> dict:
         for q in questions:
             t0 = time.monotonic()
             try:
-                # Non-streaming call for eval simplicity
-                # In production, use streaming — but for eval, a non-streaming endpoint is simpler.
-                # TODO: Add a /chat/sessions/{id}/messages/sync endpoint for evaluation use.
                 print(f"[{q['id']}] Running: {q['question'][:60]}…")
-                # Placeholder: streaming eval requires consuming SSE
-                # This section should be implemented by the agent using the streaming API
+                with client.stream(
+                    "POST",
+                    f"{api_url}/api/v1/chat/sessions/{session_id}/messages",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"query": q["question"], "mode": "researcher"},
+                ) as response:
+                    response.raise_for_status()
+                    answer_text, sources, latency_ms = _parse_sse_stream(response)
+
                 result = {
                     "id": q["id"],
                     "question": q["question"],
                     "category": q["category"],
-                    "note": "RAG eval requires streaming consumption — implement in agent",
+                    "response_text": answer_text,
+                    "sources": sources,
+                    "latency_ms": latency_ms or int((time.monotonic() - t0) * 1000),
                 }
                 results.append(result)
+                print(
+                    f"[{q['id']}] sources={len(sources)} latency={result['latency_ms']}ms "
+                    f"response_chars={len(answer_text)}"
+                )
 
             except Exception as exc:
                 print(f"[{q['id']}] ERROR: {exc}")

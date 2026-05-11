@@ -41,12 +41,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import asyncpg
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy import text
 
 from pipelines.ingestion.pubmed_abstract import PubMedAbstractIngester
 from pipelines.ingestion.pdf_local import LocalPDFIngester
 from pipelines.processing.chunker import Chunker
+from pipelines.processing.deduplicator import Deduplicator
 from pipelines.processing.normalizer import NormalizedDocument
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -81,6 +80,11 @@ async def upsert_document(conn, doc: NormalizedDocument, manifest_id: uuid.UUID)
 async def upsert_chunks_with_embeddings(conn, doc_db_id: uuid.UUID, manifest_id: uuid.UUID,
                                          chunks, embeddings, embedding_model_name: str):
     """Batch upsert chunks with their embeddings."""
+    await conn.execute(
+        "DELETE FROM document_chunks WHERE document_id=$1 AND embedding_model=$2",
+        doc_db_id,
+        embedding_model_name,
+    )
     for chunk, embedding in zip(chunks, embeddings):
         embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
         await conn.execute(
@@ -93,6 +97,20 @@ async def upsert_chunks_with_embeddings(conn, doc_db_id: uuid.UUID, manifest_id:
             """,
             doc_db_id, manifest_id, chunk.chunk_index, chunk.chunk_type,
             chunk.content, chunk.token_count, embedding_model_name, embedding_str,
+        )
+
+
+async def load_existing_pubmed_pmids(conn) -> list[str]:
+    rows = await conn.fetch("SELECT pmid FROM documents WHERE pmid IS NOT NULL")
+    return [row["pmid"] for row in rows if row["pmid"]]
+
+
+def validate_index_embedding(embedder) -> None:
+    if embedder.dimensions != 768:
+        raise ValueError(
+            "Indexing currently supports only 768-dimensional embeddings stored in document_chunks.embedding. "
+            f"Configured model '{embedder.model_name}' produces {embedder.dimensions} dimensions. "
+            "Use PubMedBERT for persistent indexing until a multi-dimension embedding table is added."
         )
 
 
@@ -129,6 +147,8 @@ async def build_index(config_path: str, from_date: date | None = None, year: int
     else:
         raise ValueError(f"Unknown embedding model: {embedding_model_name}")
 
+    validate_index_embedding(embedder)
+
     # Create manifest
     manifest_id = uuid.uuid4()
     manifest_name = corpus_cfg["name"]
@@ -146,6 +166,9 @@ async def build_index(config_path: str, from_date: date | None = None, year: int
     # Set up ingester
     if source == "pubmed_abstract":
         ingester = PubMedAbstractIngester.from_config(config_path, incremental_from=from_date)
+        if year is not None:
+            ingester.year_from = year
+            ingester.year_to = year
     elif source == "pdf":
         ingester = LocalPDFIngester(pdf_dir=cfg.get("pdf", {}).get("dir", "./data/pdfs"))
     else:
@@ -161,13 +184,19 @@ async def build_index(config_path: str, from_date: date | None = None, year: int
 
     doc_count = 0
     chunk_count = 0
-    chunk_buffer: list = []
-    chunk_db_ids: list = []
+    deduplicator = Deduplicator()
+
+    if from_date is not None and source == "pubmed_abstract":
+        deduplicator.load_existing_pmids(await load_existing_pubmed_pmids(conn))
 
     try:
         for doc in ingester.fetch():
+            if deduplicator.is_duplicate(doc):
+                continue
+
             # Upsert document
             doc_db_id = await upsert_document(conn, doc, manifest_id)
+            deduplicator.register(doc)
             doc_count += 1
 
             # Chunk

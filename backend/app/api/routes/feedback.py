@@ -5,7 +5,7 @@ User feedback on assistant responses (thumbs up/down + optional comment).
 """
 
 import uuid
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, DBSession
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/feedback", tags=["feedback"])
 
 class FeedbackRequest(BaseModel):
     message_id: uuid.UUID
-    rating: int  # 1–5; in the UI this is typically 1 (bad) or 5 (good)
+    rating: int = Field(ge=1, le=5)  # 1–5; in the UI this is typically 1 (bad) or 5 (good)
     comment: str | None = None
 
 

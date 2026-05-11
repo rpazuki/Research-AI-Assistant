@@ -9,7 +9,7 @@ from fastapi import APIRouter
 from sqlalchemy import func, select, text
 
 from app.api.deps import CurrentUser, DBSession
-from app.db.models import Document, IngestionManifest
+from app.db.models import Document, DocumentChunk, IngestionManifest
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -51,6 +51,9 @@ async def corpus_stats(current_user: CurrentUser, db: DBSession) -> dict:
     doc_count_result = await db.execute(select(func.count(Document.id)))
     doc_count = doc_count_result.scalar_one()
 
+    chunk_count_result = await db.execute(select(func.count(DocumentChunk.id)))
+    chunk_count = chunk_count_result.scalar_one()
+
     year_range_result = await db.execute(
         select(func.min(Document.year), func.max(Document.year))
     )
@@ -65,8 +68,37 @@ async def corpus_stats(current_user: CurrentUser, db: DBSession) -> dict:
 
     return {
         "document_count": doc_count,
+        "chunk_count": chunk_count,
         "year_min": min_year,
         "year_max": max_year,
         "last_ingestion": manifest_row.created_at.isoformat() if manifest_row else None,
         "last_corpus_name": manifest_row.name if manifest_row else None,
     }
+
+
+@router.get("/topics")
+async def topics(current_user: CurrentUser, db: DBSession, limit: int = 20) -> list[dict]:
+    """Approximate topic distribution using keywords when present, otherwise MeSH terms."""
+    result = await db.execute(
+        text(
+            """
+            SELECT topic, COUNT(*) AS count
+            FROM (
+                SELECT unnest(
+                    CASE
+                        WHEN array_length(keywords, 1) IS NOT NULL AND array_length(keywords, 1) > 0
+                            THEN keywords
+                        ELSE mesh_terms
+                    END
+                ) AS topic
+                FROM documents
+            ) AS topics
+            WHERE topic IS NOT NULL AND topic <> ''
+            GROUP BY topic
+            ORDER BY count DESC
+            LIMIT :limit
+            """
+        ),
+        {"limit": limit},
+    )
+    return [{"topic": row.topic, "count": row.count} for row in result]

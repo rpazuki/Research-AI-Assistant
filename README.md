@@ -4,6 +4,8 @@ Internal RAG-based scientific literature assistant for the Rodrigo Ledesma-Amaro
 
 **Access is restricted to lab members.** No public endpoint.
 
+The frontend authenticates against the backend through same-origin Next.js route handlers and stores the backend bearer token in an `httpOnly` cookie. The browser does not need direct access to the token.
+
 ---
 
 ## Architecture
@@ -124,6 +126,8 @@ cd frontend
 npm install
 ```
 
+The frontend proxies authenticated API calls through Next.js route handlers under `/api/auth/*` and `/api/backend/*`. For local development, `NEXT_PUBLIC_API_URL` must point to the FastAPI backend, which defaults to `http://localhost:8000`.
+
 ---
 
 ## Running in Development
@@ -176,6 +180,13 @@ python -m pipelines.indexing.build_index \
   --from-date 2025-01-01
 ```
 
+Notes:
+
+- `--from-date` now performs date-bounded PubMed queries and skips PMIDs that are already present in the database, so incremental runs avoid re-embedding previously indexed articles.
+- `--year YYYY` constrains the PubMed ingestion window to that exact publication year.
+- Re-running indexing for an existing document replaces that document's chunk rows for the active embedding model instead of silently duplicating them.
+- Persistent indexing currently requires the default PubMedBERT embedding because the database schema stores `vector(768)`. MiniLM remains available for experimentation, but not for writing a persistent index until a multi-dimension embedding table is added.
+
 ### After first full ingestion — create the vector index
 
 The IVFFlat index must be built after data exists. Run this once:
@@ -187,6 +198,23 @@ USING ivfflat (embedding vector_cosine_ops)
 WITH (lists = 100);
 "
 ```
+
+## Evaluation
+
+The retrieval and RAG evaluation harness can be run against a live backend once you have a valid JWT bearer token:
+
+```bash
+cd backend
+source .venv/bin/activate
+
+# Retrieval-only evaluation
+python ../evaluation/run_eval.py --mode retrieval --api-url http://localhost:8000 --token <jwt>
+
+# Full RAG evaluation via SSE consumption
+python ../evaluation/run_eval.py --mode rag --api-url http://localhost:8000 --token <jwt>
+```
+
+RAG evaluation now consumes the streaming chat endpoint directly and writes full responses, sources, and latencies to `evaluation/reports/`.
 
 ---
 

@@ -1,0 +1,10 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "command": true,
+        "/Users/roozbeh/.pyenv/versions/3.12.8/bin/python": true,
+        "npm run type-check": true,
+        "npm install": true,
+        "pushd": true,
+        "popd": true
+    }
+}
