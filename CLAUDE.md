@@ -1,6 +1,6 @@
 # CLAUDE.md — RLALab AI Research Assistant
 
-**Last updated:** 2026-05-04  
+**Last updated:** 2026-05-12  
 **Project owner:** Roozbeh Pazuki (roozbeh.pazuki@imperial.ac.uk)  
 **Lab:** Rodrigo Ledesma-Amaro Lab (RLA Lab), Department of Bioengineering, Imperial College London  
 **Bezos Centre for Sustainable Protein**
@@ -45,7 +45,7 @@ All decisions recorded below were made explicitly by the project owner and must 
 ```
 RLALab-AI-Assistant/
 ├── CLAUDE.md                        ← This file. Architecture reference for agents.
-├── README.md                        ← User-facing setup and usage guide
+├── README.md                        ← Developer-facing setup, testing, and operations guide
 ├── docker-compose.yml               ← Local dev orchestration (Postgres, backend, frontend)
 ├── docker-compose.prod.yml          ← Production compose override
 ├── .env.example                     ← Template for required environment variables
@@ -164,7 +164,8 @@ RLALab-AI-Assistant/
 │   └── reports/                     ← Evaluation run outputs (gitignored large files)
 │
 └── docs/
-    ├── architecture.md              ← This project's architecture narrative
+    ├── architecture.md              ← Abstract system layers, flows, and runtime boundaries
+    ├── components.md                ← Concrete component inventory: files, routes, pages, services
     ├── evaluation-guidelines.md     ← Full evaluation methodology (auto-generated, see §10)
     ├── ingestion-guide.md           ← How to run and update corpus
     └── api-reference.md             ← FastAPI auto-docs supplement
@@ -192,11 +193,11 @@ RLALab-AI-Assistant/
 ### Frontend
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
-| Framework | Next.js 15 (App Router) | SSR, TypeScript, great DX |
-| Styling | Tailwind CSS 4 | Utility-first, no CSS fragility |
-| State | Zustand | Lightweight; avoids Redux overhead for this scale |
-| Data fetching | TanStack Query (React Query) | Caching, background refetch, streaming |
-| Auth | next-auth (credentials provider) | Handles JWT storage and route protection cleanly |
+| Framework | Next.js 15 (App Router) | SSR, TypeScript, route handlers for same-origin proxying |
+| Styling | Tailwind CSS 4 | Utility-first, low-friction iteration |
+| State | Local React state + route state | Current UI does not use a separate global state library |
+| Data fetching | Typed fetch wrapper in `src/lib/api.ts` | Keeps browser calls on same-origin `/api/*` routes |
+| Auth | Next.js route handlers + `httpOnly` cookie | Browser never handles backend bearer token directly |
 | Charts | Recharts | React-native charting; good for analytics tab |
 | Streaming | native EventSource / fetch ReadableStream | SSE for LLM token streaming |
 
@@ -715,7 +716,7 @@ Always cite sources using their PMID or DOI when available.
 - Login: `POST /api/v1/auth/login` with `{ email, password }` → `{ access_token }`.
 - Tokens: HS256 JWT, 8-hour expiry, signed with `SECRET_KEY` env var.
 - All protected endpoints require `Authorization: Bearer <token>`.
-- Frontend stores token in `httpOnly` cookie managed by next-auth.
+- Frontend exchanges credentials through `POST /api/auth/login`, stores the backend JWT in an `httpOnly` cookie, and forwards authenticated backend calls through `/api/backend/*`.
 - User roles: `researcher` (default), `admin` (can manage users and trigger re-ingestion).
 
 ### Iteration 2 (future): OIDC/SSO
@@ -728,22 +729,27 @@ Always cite sources using their PMID or DOI when available.
 ## 13. Frontend Architecture
 
 ### Pages
-- `/login` — credential form; next-auth credentials provider; stores JWT in httpOnly cookie.
+- `/login` — credential form that calls the Next.js login route, which writes the backend JWT into an `httpOnly` cookie.
 - `/chat` — main interface. Left sidebar: session history. Main panel: chat window. Right panel (collapsible): source documents.
 - `/chat/[sessionId]` — restore a previous session.
 - `/analytics` — literature landscape: temporal chart, journal ranking, topic heatmap (data from analytics API).
 
 ### Chat streaming
-Use `fetch` with `ReadableStream` to consume SSE from the backend:
+Use `fetch` with `ReadableStream` to consume SSE from the Next.js backend proxy, not directly from the browser to FastAPI:
 ```typescript
-const response = await fetch('/api/v1/chat/sessions/{id}/messages', {
+const response = await fetch('/api/backend/chat/sessions/{id}/messages', {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ query, mode }),
 });
 const reader = response.body.getReader();
 // decode and append tokens to UI state
 ```
+
+### Agent constraints for auth work
+- Do not reintroduce browser-managed bearer tokens or `localStorage` token storage.
+- Keep auth mutations in Next.js route handlers under `frontend/src/app/api/auth/*`.
+- Keep authenticated browser-to-backend traffic on the same-origin proxy under `frontend/src/app/api/backend/[...path]/route.ts`.
 
 ### Source panel
 After the `done` SSE event, display retrieved sources in a collapsible right panel:
@@ -800,11 +806,13 @@ CORS_ORIGINS=http://localhost:3000
 
 ```bash
 # 1. Start Postgres with pgvector
-docker-compose up db -d
+docker compose up db -d
 
 # 2. Backend
 cd backend
-uv venv && uv pip install -e ".[dev]"
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 
@@ -818,8 +826,18 @@ cd pipelines
 python -m indexing.build_index --config configs/corpus.rlalab.toml
 
 # 5. Run tests
-cd backend && pytest
+cd backend && python -m pytest tests
+cd ../frontend && npm run test && npm run type-check
 ```
+
+Implementation notes for agents:
+
+- First backend startup downloads PubMedBERT weights into `backend/model_cache` if they are missing.
+- The supported local runtime currently relies on `torch 2.2.x` plus `transformers 4.51.x`; if a machine has a newer `transformers` installed already, reinstall backend deps with `pip install -e ".[dev]" --upgrade` before debugging unrelated startup failures.
+- The supported password-hashing stack currently relies on `passlib[bcrypt]` with `bcrypt<4.1`; do not widen that constraint without revalidating user creation and login flows.
+- Integration tests must override `deps.get_embedding_model` and `deps.get_llm_provider`; otherwise tests will try to instantiate the real embedding model and external provider client.
+- The expanded automated test suite currently lives in `backend/tests/` and `frontend/src/app/login/page.test.tsx` with Vitest config in `frontend/vitest.config.ts`.
+- If Homebrew installs `pgvector` without exposing `vector.control` to PostgreSQL 16, build it manually with `make PG_CONFIG=$(brew --prefix postgresql@16)/bin/pg_config && make install ...` before troubleshooting Alembic or app startup.
 
 ---
 
@@ -875,6 +893,7 @@ services:
 8. **Chunk embedding dimensions:** If you add an embedding model with different dimensions, you must either add a new vector column or a separate table. Mixing 768-dim and 384-dim vectors in the same column is not valid.
 9. **alembic autogenerate:** Will not detect vector column type changes automatically. Write those migrations by hand using `op.execute()`.
 10. **Full-text ingestion licensing:** PMC full text is only available for open-access articles. Always check `license` field and respect restrictions.
+11. **Async ORM serialization:** When returning ORM-backed response models in async routes, avoid response construction paths that trigger lazy relationship loading during Pydantic validation. Build nested response objects explicitly when necessary.
 
 ---
 

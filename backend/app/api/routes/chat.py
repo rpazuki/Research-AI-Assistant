@@ -58,10 +58,17 @@ async def get_session(
 ) -> ChatSessionWithMessages:
     session = await _get_owned_session(session_id, current_user.id, db)
     messages = await crud.get_messages_for_session(db, session_id=session.id)
-    result = ChatSessionWithMessages.model_validate(session)
     from app.schemas.chat import ChatMessageResponse
-    result.messages = [ChatMessageResponse.model_validate(m) for m in messages]
-    return result
+
+    return ChatSessionWithMessages(
+        id=session.id,
+        user_id=session.user_id,
+        title=session.title,
+        mode=session.mode,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+        messages=[ChatMessageResponse.model_validate(m) for m in messages],
+    )
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

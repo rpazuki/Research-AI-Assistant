@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatMessageRequest(BaseModel):
@@ -51,7 +51,7 @@ class ChatSessionResponse(BaseModel):
 
 
 class ChatSessionWithMessages(ChatSessionResponse):
-    messages: list[ChatMessageResponse] = []
+    messages: list[ChatMessageResponse] = Field(default_factory=list)
 
 
 # SSE event payloads

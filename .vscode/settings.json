@@ -5,6 +5,20 @@
         "npm run type-check": true,
         "npm install": true,
         "pushd": true,
-        "popd": true
+        "popd": true,
+        "npm run test": true,
+        "/^cd /Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant && docker-compose up db -d$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/.venv-1/bin/python": true,
+        "npm run dev": true,
+        "docker compose": true,
+        "pg_isready": true,
+        "true": true,
+        "brew": true,
+        "printf": true,
+        "/Users/roozbeh/homebrew/opt/postgresql@16/bin/pg_ctl": true,
+        "/Users/roozbeh/homebrew/opt/postgresql@16/bin/pg_isready": true
     }
 }

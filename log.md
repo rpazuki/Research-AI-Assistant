@@ -108,3 +108,48 @@ docker-compose.prod.yml                 (new)
 ### Remaining notable limitations
 - `pipelines/ingestion/pmc_fulltext.py` full JATS XML parsing is still incomplete
 - Persistent multi-embedding indexing is still not implemented; the code now fails fast instead of pretending otherwise
+
+---
+
+## Session continuation: 2026-05-12
+
+### What was done
+
+#### Automated verification and local runtime
+- Installed and initialized a local PostgreSQL 16 cluster under Homebrew
+- Created the `rlalab_ai` database and matching `postgres` role for the local `.env` configuration
+- Built and installed `pgvector` manually against PostgreSQL 16 after the default Homebrew formula path only exposed extension artifacts for PostgreSQL 17/18 on this machine
+- Enabled `CREATE EXTENSION vector` and ran `alembic upgrade head` successfully
+- Created a local verification user with `backend/scripts/create_user.py`
+- Verified the real browser flow against the live stack:
+  - login through the Next.js auth route and backend JWT exchange
+  - analytics page rendering against an empty corpus
+  - chat session creation and session restore route
+  - logout back to `/login`
+
+#### Backend fixes completed during runtime verification
+- **Pinned `bcrypt<4.1` in `backend/pyproject.toml`** to restore Passlib-compatible password hashing for user creation and login
+- **Fixed async chat session serialization** in `backend/app/api/routes/chat.py` by constructing `ChatSessionWithMessages` explicitly instead of letting Pydantic trigger lazy ORM access on `messages`
+- **Updated `backend/app/schemas/chat.py`** to use `Field(default_factory=list)` for `messages`
+- **Extended backend integration coverage** with a regression test for `GET /api/v1/chat/sessions/{session_id}`
+
+#### Documentation
+- Added `docs/architecture.md` for the abstract layer and flow overview
+- Added `docs/components.md` for the concrete component inventory
+- Updated `README.md` with:
+  - links to the new architecture docs
+  - a manual pgvector build fallback for PostgreSQL 16
+  - the verified `bcrypt` compatibility note
+- Updated `CLAUDE.md` with agent-facing runtime notes about pgvector, bcrypt compatibility, and async ORM serialization hazards
+
+### Validation
+- Backend focused integration tests: `5 passed`
+- Full backend suite: previously verified at `12 passed`
+- Frontend tests: previously verified at `2 passed`
+- Frontend type-check: previously verified clean
+- Live backend auth endpoint: verified 200 response
+- Live UI flows: verified login, analytics, session create/restore, logout
+
+### Remaining notable limitations
+- Chat answer generation still depends on external Anthropic credentials and a populated corpus; the empty local database only validates the shell and session flow, not scientific answer quality
+- Persistent multi-embedding indexing is still intentionally blocked by the fixed `vector(768)` schema

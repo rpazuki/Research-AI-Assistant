@@ -25,15 +25,137 @@ IMPLEMENTER NOTE:
 import logging
 import time
 from collections.abc import Iterator
+from xml.etree import ElementTree as ET
 
 import httpx
 
 from pipelines.ingestion.base import BaseIngester
+from pipelines.processing.normalizer import AuthorRecord
 from pipelines.processing.normalizer import NormalizedDocument
 
 logger = logging.getLogger(__name__)
 
 PMC_OA_BASE = "https://www.ncbi.nlm.nih.gov/pmc/oai/oai.cgi"
+
+
+def _local_name(tag: str) -> str:
+    return tag.split("}", 1)[-1]
+
+
+def _normalize_space(text: str | None) -> str:
+    if not text:
+        return ""
+    return " ".join(text.split())
+
+
+def _iter_elements(root: ET.Element, name: str):
+    for element in root.iter():
+        if _local_name(element.tag) == name:
+            yield element
+
+
+def _find_first(root: ET.Element, name: str) -> ET.Element | None:
+    return next(_iter_elements(root, name), None)
+
+
+def _element_text(element: ET.Element | None) -> str:
+    if element is None:
+        return ""
+    return _normalize_space(" ".join(text for text in element.itertext()))
+
+
+def _extract_metadata(xml_text: str) -> dict[str, object]:
+    root = ET.fromstring(xml_text)
+
+    article = _find_first(root, "article")
+    if article is None:
+        raise ValueError("PMC response did not contain an article element")
+
+    title = _element_text(_find_first(article, "article-title")) or None
+    abstract = _element_text(_find_first(article, "abstract")) or None
+
+    pmid = None
+    doi = None
+    for article_id in _iter_elements(article, "article-id"):
+        id_type = article_id.attrib.get("pub-id-type", "")
+        value = _element_text(article_id) or None
+        if id_type == "pmid":
+            pmid = value
+        elif id_type == "doi":
+            doi = value
+
+    keywords = [
+        keyword
+        for keyword in (_element_text(kwd) for kwd in _iter_elements(article, "kwd"))
+        if keyword
+    ]
+
+    license_text = _element_text(_find_first(article, "license-p")) or None
+    journal = _element_text(_find_first(article, "journal-title")) or None
+
+    year = None
+    pub_year = _element_text(_find_first(article, "year"))
+    if pub_year.isdigit():
+        year = int(pub_year)
+
+    authors: list[AuthorRecord] = []
+    for contrib in _iter_elements(article, "contrib"):
+        if contrib.attrib.get("contrib-type") != "author":
+            continue
+        name = _find_first(contrib, "name")
+        surname = _element_text(_find_first(name, "surname")) if name is not None else ""
+        given_names = _element_text(_find_first(name, "given-names")) if name is not None else ""
+        if surname or given_names:
+            initials = "".join(part[0] for part in given_names.split() if part)
+            authors.append(
+                AuthorRecord(
+                    last_name=surname,
+                    fore_name=given_names,
+                    initials=initials,
+                )
+            )
+
+    return {
+        "title": title,
+        "abstract": abstract,
+        "pmid": pmid,
+        "doi": doi,
+        "keywords": keywords,
+        "license": license_text,
+        "journal": journal,
+        "year": year,
+        "authors": authors,
+    }
+
+
+def _extract_article_text(xml_text: str) -> str:
+    root = ET.fromstring(xml_text)
+    article = _find_first(root, "article")
+    if article is None:
+        raise ValueError("PMC response did not contain an article element")
+
+    body = _find_first(article, "body")
+    if body is None:
+        return ""
+
+    sections: list[str] = []
+    for sec in _iter_elements(body, "sec"):
+        title = _element_text(_find_first(sec, "title"))
+        paragraphs = [
+            paragraph
+            for paragraph in (_element_text(p) for p in _iter_elements(sec, "p"))
+            if paragraph
+        ]
+        if not title and not paragraphs:
+            continue
+
+        section_lines: list[str] = []
+        if title:
+            section_lines.append(title)
+        section_lines.extend(paragraphs)
+        sections.append("\n".join(section_lines))
+
+    return "\n\n".join(section for section in sections if section).strip()
 
 
 class PMCFullTextIngester(BaseIngester):
@@ -85,20 +207,24 @@ class PMCFullTextIngester(BaseIngester):
             response = client.get(url)
             response.raise_for_status()
 
-        # TODO: Parse JATS XML response
-        # For now, return the raw XML as full_text for inspection.
-        # The implementing agent should extract:
-        # - Abstract section
-        # - Introduction, Methods, Results, Discussion sections
-        # - Figure and table captions (optional)
+        metadata = _extract_metadata(response.text)
+        full_text = _extract_article_text(response.text)
 
         logger.info(f"Fetched PMC {pmc_id}: {len(response.text)} chars")
 
         return NormalizedDocument(
             document_id=f"pmc:{pmc_id}",
             source="pmc",
+            title=metadata["title"],
+            abstract=metadata["abstract"],
+            authors=metadata["authors"],
+            journal=metadata["journal"],
+            year=metadata["year"],
+            doi=metadata["doi"],
+            pmid=metadata["pmid"],
             pmc_id=pmc_id,
-            full_text=response.text,  # Replace with parsed text
-            license="open-access",    # PMC OA subset is always OA
+            full_text=full_text,
+            keywords=metadata["keywords"],
+            license=metadata["license"] or "open-access",
             url=f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/",
         )

@@ -4,7 +4,11 @@ Internal RAG-based scientific literature assistant for the Rodrigo Ledesma-Amaro
 
 **Access is restricted to lab members.** No public endpoint.
 
+This README is for developers working on local setup, testing, ingestion, and deployment.
+
 The frontend authenticates against the backend through same-origin Next.js route handlers and stores the backend bearer token in an `httpOnly` cookie. The browser does not need direct access to the token.
+
+For architectural context, see `docs/architecture.md`. For a concrete implementation inventory, see `docs/components.md`.
 
 ---
 
@@ -45,12 +49,24 @@ createdb rlalab_ai
 psql rlalab_ai -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
+If `brew install pgvector` completes but PostgreSQL 16 still cannot see the `vector` extension, build it directly against the PostgreSQL 16 `pg_config`:
+
+```bash
+brew unpack pgvector --destdir /tmp/pgvector-src
+cd /tmp/pgvector-src/pgvector-*
+make PG_CONFIG="$(brew --prefix postgresql@16)/bin/pg_config"
+make install PG_CONFIG="$(brew --prefix postgresql@16)/bin/pg_config"
+psql rlalab_ai -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
 ### Or: use Docker (preferred)
 
 ```bash
 # Start only the database container
-docker-compose up db -d
+docker compose up db -d
 ```
+
+If your machine still exposes the legacy standalone binary, `docker-compose up db -d` is equivalent.
 
 ---
 
@@ -99,6 +115,14 @@ pip install -e ".[dev]"
 # Run database migrations
 alembic upgrade head
 ```
+
+If you already installed backend dependencies before 2026-05-12, refresh them once so the local model stack matches the pinned runtime-compatible versions:
+
+```bash
+pip install -e ".[dev]" --upgrade
+```
+
+The backend also pins `bcrypt<4.1` because newer releases break Passlib-backed password hashing in this project.
 
 ### 2. Create the first user
 
@@ -150,10 +174,39 @@ npm run dev
 
 **Terminal 3 — Database** (if using Docker)
 ```bash
-docker-compose up db
+docker compose up db
 ```
 
 API docs available at: `http://localhost:8000/api/docs`
+
+Notes:
+
+- The first backend startup downloads the PubMedBERT checkpoint (~440 MB) into `backend/model_cache` unless it is already cached.
+- Backend startup currently preloads the embedding model. The verified local-compatible stack is `torch 2.2.x` plus `transformers 4.51.x`; if startup fails with a `torch.load` safety error, rerun `pip install -e ".[dev]" --upgrade` from `backend/`.
+- The frontend expects the backend at `http://localhost:8000` unless `NEXT_PUBLIC_API_URL` is overridden.
+
+## Tests
+
+The repository now has both backend and frontend automated tests.
+
+```bash
+# Backend unit + integration tests
+cd backend
+python -m pytest tests
+
+# Frontend unit tests
+cd ../frontend
+npm run test
+
+# Frontend type-check
+npm run type-check
+```
+
+Current coverage includes:
+
+- Backend unit tests for indexing safeguards, incremental PubMed ingestion, SSE evaluation parsing, and PMC full-text parsing.
+- Backend integration tests for auth, search, analytics, chat session loading, and chat streaming using FastAPI dependency overrides.
+- Frontend unit tests for the login flow with Vitest, jsdom, and Testing Library.
 
 ---
 
@@ -184,6 +237,7 @@ Notes:
 
 - `--from-date` now performs date-bounded PubMed queries and skips PMIDs that are already present in the database, so incremental runs avoid re-embedding previously indexed articles.
 - `--year YYYY` constrains the PubMed ingestion window to that exact publication year.
+- PMC full-text ingestion now parses article metadata and body sections into normalized documents instead of storing raw XML payloads.
 - Re-running indexing for an existing document replaces that document's chunk rows for the active embedding model instead of silently duplicating them.
 - Persistent indexing currently requires the default PubMedBERT embedding because the database schema stores `vector(768)`. MiniLM remains available for experimentation, but not for writing a persistent index until a multi-dimension embedding table is added.
 
