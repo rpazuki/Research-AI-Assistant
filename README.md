@@ -68,6 +68,21 @@ docker compose up db -d
 
 If your machine still exposes the legacy standalone binary, `docker-compose up db -d` is equivalent.
 
+
+Use the follwoing command to make sure the postgres accept connection, and the db is running.
+```bash
+docker exec -it rlalab_db pg_isready -U postgres -d rlalab_ai
+```
+and next
+```bash
+docker exec -it rlalab_db psql -U postgres -d rlalab_ai
+```
+inside psql, run
+```
+SELECT current_database(), current_user, version();
+\l
+\dt
+```
 ---
 
 ## Configuration — API Keys
