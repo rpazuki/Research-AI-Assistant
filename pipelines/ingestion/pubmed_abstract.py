@@ -17,6 +17,7 @@ Usage:
         process(doc)
 """
 
+import calendar
 import json
 import os
 import time
@@ -32,6 +33,9 @@ from pipelines.processing.normalizer import AuthorRecord, NormalizedDocument
 
 import logging
 logger = logging.getLogger(__name__)
+
+# PubMed hard-caps retstart at this value; beyond it ESearch raises a RuntimeError.
+_PUBMED_MAX_RETSTART = 9998
 
 
 class PubMedAbstractIngester(BaseIngester):
@@ -121,7 +125,12 @@ class PubMedAbstractIngester(BaseIngester):
             time.sleep(self.sleep_s)
 
     def _collect_pmids(self) -> list[str]:
-        """Collect all PMIDs for the configured query, splitting by year."""
+        """Collect all PMIDs for the configured query, splitting by year.
+
+        When a year has more than _PUBMED_MAX_RETSTART results (PubMed's hard
+        pagination cap), it is automatically split into monthly sub-queries so
+        that no single ESearch call exceeds the limit.
+        """
         all_pmids: list[str] = []
         for year in range(self.year_from, self.year_to + 1):
             if self.incremental_from and year < self.incremental_from.year:
@@ -143,11 +152,13 @@ class PubMedAbstractIngester(BaseIngester):
                 continue
 
             logger.info(f"Year {year}: {total} articles")
-            year_pmids: list[str] = []
-            for start in range(0, total, self.batch_size):
-                record = self._safe_esearch(year_query, retstart=start, retmax=self.batch_size)
-                year_pmids.extend(record.get("IdList", []))
-                time.sleep(self.sleep_s)
+
+            if total > _PUBMED_MAX_RETSTART:
+                # Split into monthly sub-queries to stay within PubMed's limit.
+                logger.info(f"Year {year}: exceeds {_PUBMED_MAX_RETSTART} — splitting into monthly queries")
+                year_pmids = self._collect_pmids_monthly(year)
+            else:
+                year_pmids = self._paginate_query(year_query, total)
 
             # Checkpoint
             with open(checkpoint_file, "w") as f:
@@ -155,6 +166,43 @@ class PubMedAbstractIngester(BaseIngester):
             all_pmids.extend(year_pmids)
 
         return all_pmids
+
+    def _collect_pmids_monthly(self, year: int) -> list[str]:
+        """Fetch PMIDs for a single year by issuing one query per month."""
+        pmids: list[str] = []
+        for month in range(1, 13):
+            # Skip months before the incremental_from date.
+            if self.incremental_from and year == self.incremental_from.year:
+                if month < self.incremental_from.month:
+                    continue
+
+            last_day = calendar.monthrange(year, month)[1]
+            start_date = f"{year}/{month:02d}/01"
+            end_date = f"{year}/{month:02d}/{last_day:02d}"
+            month_query = (
+                f"({self.query}) AND "
+                f'("{start_date}"[PDAT] : "{end_date}"[PDAT])'
+            )
+            count_record = self._safe_esearch(month_query, retmax=1)
+            month_total = int(count_record.get("Count", 0))
+            logger.info(f"  {year}/{month:02d}: {month_total} articles")
+            if month_total == 0:
+                continue
+            pmids.extend(self._paginate_query(month_query, month_total))
+        return pmids
+
+    def _paginate_query(self, query: str, total: int) -> list[str]:
+        """Paginate a single ESearch query and return all PMIDs.
+
+        Caps retstart at _PUBMED_MAX_RETSTART as a safety measure.
+        """
+        pmids: list[str] = []
+        cap = min(total, _PUBMED_MAX_RETSTART + self.batch_size)
+        for start in range(0, cap, self.batch_size):
+            record = self._safe_esearch(query, retstart=start, retmax=self.batch_size)
+            pmids.extend(record.get("IdList", []))
+            time.sleep(self.sleep_s)
+        return pmids
 
     def _checkpoint_file_for_year(self, year: int) -> Path:
         if self.incremental_from is None:

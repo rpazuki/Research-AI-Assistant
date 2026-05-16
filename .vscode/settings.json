@@ -19,6 +19,8 @@
         "brew": true,
         "printf": true,
         "/Users/roozbeh/homebrew/opt/postgresql@16/bin/pg_ctl": true,
-        "/Users/roozbeh/homebrew/opt/postgresql@16/bin/pg_isready": true
-    }
+        "/Users/roozbeh/homebrew/opt/postgresql@16/bin/pg_isready": true,
+        "./.venv/bin/python": true
+    },
+    "python.terminal.useEnvFile": true
 }

@@ -31,6 +31,7 @@ IMPORTANT after first load:
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 import uuid
@@ -70,9 +71,9 @@ async def upsert_document(conn, doc: NormalizedDocument, manifest_id: uuid.UUID)
         RETURNING id
         """,
         manifest_id, d["document_id"], d["source"], d["title"], d["abstract"],
-        d["full_text"], d["authors"], d["journal"], d["publication_date"],
+        d["full_text"], json.dumps(d["authors"]), d["journal"], d["publication_date"],
         d["year"], d["doi"], d["pmid"], d["pmc_id"], d["mesh_terms"],
-        d["keywords"], d["url"], d["license"], d["ingested_at"], d["metadata"],
+        d["keywords"], d["url"], d["license"], d["ingested_at"], json.dumps(d["metadata"]),
     )
     return row["id"]
 

@@ -8,6 +8,7 @@ Start with:
 """
 
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,7 @@ from app.core.logging import configure_logging
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle events."""
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", settings.tokenizers_parallelism)
     configure_logging()
 
     # Pre-load expensive singletons at startup so first request is fast.

@@ -238,6 +238,39 @@ async def test_chat_streaming_endpoint_emits_sse_and_persists_messages(api_clien
 
 
 @pytest.mark.asyncio
+async def test_chat_streaming_endpoint_surfaces_blank_exceptions(api_client, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, user, _db = api_client
+    session = SimpleNamespace(id=uuid.uuid4(), user_id=user.id, mode="researcher")
+
+    class SilentError(Exception):
+        def __str__(self) -> str:
+            return ""
+
+    async def fake_get_session(_db_obj, session_id):
+        assert session_id == session.id
+        return session
+
+    async def fake_create_chat_message(_db_obj, **_kwargs):
+        return SimpleNamespace(id=uuid.uuid4())
+
+    async def fake_run_rag_stream(**_kwargs):
+        raise SilentError()
+        yield
+
+    monkeypatch.setattr("app.db.crud.get_session", fake_get_session)
+    monkeypatch.setattr("app.db.crud.create_chat_message", fake_create_chat_message)
+    monkeypatch.setattr("app.api.routes.chat.run_rag_stream", fake_run_rag_stream)
+
+    response = await client.post(
+        f"/api/v1/chat/sessions/{session.id}/messages",
+        json={"query": "What is known?", "mode": "researcher"},
+    )
+    assert response.status_code == 200
+    assert '"type": "error"' in response.text
+    assert "SilentError raised without a message" in response.text
+
+
+@pytest.mark.asyncio
 async def test_get_session_returns_messages_without_lazy_loading_errors(
     api_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:

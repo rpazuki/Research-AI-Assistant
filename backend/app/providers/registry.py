@@ -25,4 +25,8 @@ def get_llm_provider() -> LLMProvider:
             f"Unknown LLM provider '{settings.llm_provider}'. "
             f"Available: {list(PROVIDER_MAP.keys())}"
         )
+    if settings.llm_provider == "anthropic" and not settings.anthropic_api_key:
+        raise ValueError(
+            "Missing Anthropic API key. Set ANTHROPIC_API_KEY (or LLM_API_KEY) in the backend environment."
+        )
     return cls(model=settings.llm_model, api_key=settings.anthropic_api_key)

@@ -114,8 +114,15 @@ async def run_rag_stream(
         )
 
     except Exception as exc:
-        log.error("rag_stream_error", error=str(exc))
-        yield ("error", str(exc), None)
+        error_message = _format_exception_message(exc)
+        log.error(
+            "rag_stream_error",
+            error=error_message,
+            error_repr=repr(exc),
+            exception_type=type(exc).__name__,
+            exc_info=True,
+        )
+        yield ("error", error_message, None)
 
 
 def _chunk_to_dict(chunk: RetrievedChunk) -> dict:
@@ -127,3 +134,10 @@ def _chunk_to_dict(chunk: RetrievedChunk) -> dict:
         "year": chunk.year,
         "content": chunk.content,
     }
+
+
+def _format_exception_message(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        return message
+    return f"{type(exc).__name__} raised without a message"

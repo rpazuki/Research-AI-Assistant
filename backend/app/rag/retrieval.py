@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, desc, select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -95,7 +95,8 @@ async def _vector_search(
     filters: dict | None,
 ) -> list[RetrievedChunk]:
     """Cosine similarity search via pgvector <=> operator."""
-    embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+    distance_expr = DocumentChunk.embedding.cosine_distance(embedding)
+    score_expr = (1 - distance_expr).label("score")
 
     # Base query — join to documents for metadata
     q = (
@@ -111,13 +112,11 @@ async def _vector_search(
             Document.journal,
             Document.year,
             Document.url,
-            (
-                text(f"1 - (document_chunks.embedding <=> '{embedding_str}'::vector)")
-            ).label("score"),
+            score_expr,
         )
         .join(Document, DocumentChunk.document_id == Document.id)
         .where(DocumentChunk.embedding.isnot(None))
-        .order_by(text(f"document_chunks.embedding <=> '{embedding_str}'::vector"))
+        .order_by(distance_expr)
         .limit(top_k)
     )
 
@@ -150,6 +149,10 @@ async def _lexical_search(
     filters: dict | None,
 ) -> list[RetrievedChunk]:
     """BM25-approximation via Postgres full-text search (tsvector/tsquery)."""
+    tsquery = func.plainto_tsquery("english", bindparam("query"))
+    tsvector = func.to_tsvector("english", DocumentChunk.content)
+    score_expr = func.ts_rank(tsvector, tsquery).label("score")
+
     q = (
         select(
             DocumentChunk.id,
@@ -162,19 +165,11 @@ async def _lexical_search(
             Document.journal,
             Document.year,
             Document.url,
-            text(
-                "ts_rank(to_tsvector('english', document_chunks.content), "
-                "plainto_tsquery('english', :query))"
-            ).label("score"),
+            score_expr,
         )
         .join(Document, DocumentChunk.document_id == Document.id)
-        .where(
-            text(
-                "to_tsvector('english', document_chunks.content) @@ "
-                "plainto_tsquery('english', :query)"
-            )
-        )
-        .order_by(text("score DESC"))
+        .where(tsvector.op("@@")(tsquery))
+        .order_by(desc(score_expr))
         .limit(top_k)
     )
 

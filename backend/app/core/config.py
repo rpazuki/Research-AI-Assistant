@@ -8,12 +8,22 @@ Never call os.getenv() directly in business logic.
 """
 
 from functools import lru_cache
+from pathlib import Path
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_THIS_FILE = Path(__file__).resolve()
+_BACKEND_DIR = _THIS_FILE.parents[2]
+_REPO_ROOT = _THIS_FILE.parents[3]
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(
+            str(_REPO_ROOT / ".env"),
+            str(_BACKEND_DIR / ".env"),
+        ),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -35,7 +45,10 @@ class Settings(BaseSettings):
     # ── LLM Provider ──────────────────────────────────────────────────────
     llm_provider: str = "anthropic"  # 'anthropic' | extend as needed
     llm_model: str = "claude-sonnet-4-6"
-    anthropic_api_key: str = ""
+    anthropic_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("ANTHROPIC_API_KEY", "LLM_API_KEY"),
+    )
     llm_max_tokens: int = 2048
     llm_temperature: float = 0.1
     llm_stream_timeout_s: int = 120
@@ -45,6 +58,7 @@ class Settings(BaseSettings):
     embedding_model: str = "pubmedbert"  # 'pubmedbert' | 'minilm'
     embedding_batch_size: int = 32
     embedding_cache_dir: str = "./model_cache"
+    tokenizers_parallelism: str = "false"
 
     # ── NCBI / PubMed ─────────────────────────────────────────────────────
     ncbi_email: str = ""

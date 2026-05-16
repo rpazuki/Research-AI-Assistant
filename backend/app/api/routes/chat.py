@@ -21,9 +21,10 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import CurrentUser, DBSession, EmbeddingDep, LLMDep
+from app.core.logging import log
 from app.db import crud
 from app.db.models import ChatSession
-from app.rag.pipeline import run_rag_stream
+from app.rag.pipeline import _format_exception_message, run_rag_stream
 from app.schemas.chat import (
     ChatMessageRequest,
     ChatSessionCreate,
@@ -159,7 +160,14 @@ async def post_message(
                     yield f"data: {payload}\n\n"
 
         except Exception as exc:
-            payload = json.dumps({"type": "error", "message": str(exc)})
+            log.error(
+                "chat_stream_route_error",
+                error=_format_exception_message(exc),
+                error_repr=repr(exc),
+                exception_type=type(exc).__name__,
+                exc_info=True,
+            )
+            payload = json.dumps({"type": "error", "message": _format_exception_message(exc)})
             yield f"data: {payload}\n\n"
 
     return StreamingResponse(
