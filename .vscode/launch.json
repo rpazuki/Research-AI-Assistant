@@ -1,0 +1,119 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        // ── Backend: full suite ───────────────────────────────────────────────
+        {
+            "name": "Backend: All Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["tests/", "-v", "--tb=short"],
+            "cwd": "${workspaceFolder}/backend",
+            "python": "${workspaceFolder}/backend/.venv/bin/python",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/backend:${workspaceFolder}"
+            }
+        },
+        // ── Backend: current file ─────────────────────────────────────────────
+        {
+            "name": "Backend: Current Test File",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["${file}", "-v", "--tb=short"],
+            "cwd": "${workspaceFolder}/backend",
+            "python": "${workspaceFolder}/backend/.venv/bin/python",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/backend:${workspaceFolder}"
+            }
+        },
+        // ── Backend: unit tests only ──────────────────────────────────────────
+        {
+            "name": "Backend: Unit Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/test_security.py",
+                "tests/test_citations.py",
+                "tests/test_prompts.py",
+                "tests/test_pipeline.py",
+                "tests/test_retrieval.py",
+                "tests/test_resilience.py",
+                "-v", "--tb=short"
+            ],
+            "cwd": "${workspaceFolder}/backend",
+            "python": "${workspaceFolder}/backend/.venv/bin/python",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/backend:${workspaceFolder}"
+            }
+        },
+        // ── Backend: E2E + integration ────────────────────────────────────────
+        {
+            "name": "Backend: E2E + Integration Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/test_e2e.py",
+                "tests/test_api_integration.py",
+                "-v", "--tb=short"
+            ],
+            "cwd": "${workspaceFolder}/backend",
+            "python": "${workspaceFolder}/backend/.venv/bin/python",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/backend:${workspaceFolder}"
+            }
+        },
+        // ── Backend: FastAPI dev server ────────────────────────────────────────
+        {
+            "name": "Backend: Dev Server",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": ["app.main:app", "--reload", "--port", "8000"],
+            "cwd": "${workspaceFolder}/backend",
+            "python": "${workspaceFolder}/backend/.venv/bin/python",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/backend"
+            }
+        },
+        // ── Frontend: all tests (Vitest via npm) ──────────────────────────────
+        {
+            "name": "Frontend: All Tests",
+            "type": "node",
+            "request": "launch",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": ["test", "--", "--run"],
+            "cwd": "${workspaceFolder}/frontend",
+            "console": "integratedTerminal",
+            "skipFiles": ["<node_internals>/**"]
+        },
+        // ── Frontend: watch mode ──────────────────────────────────────────────
+        {
+            "name": "Frontend: Tests (watch)",
+            "type": "node",
+            "request": "launch",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": ["test"],
+            "cwd": "${workspaceFolder}/frontend",
+            "console": "integratedTerminal",
+            "skipFiles": ["<node_internals>/**"]
+        }
+    ],
+    "compounds": [
+        {
+            "name": "All Tests (Backend + Frontend)",
+            "configurations": [
+                "Backend: All Tests",
+                "Frontend: All Tests"
+            ],
+            "stopAll": true
+        }
+    ]
+}
