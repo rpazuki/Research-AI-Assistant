@@ -1,6 +1,6 @@
 # CLAUDE.md — RLALab AI Research Assistant
 
-**Last updated:** 2026-05-12  
+**Last updated:** 2026-05-16  
 **Project owner:** Roozbeh Pazuki (roozbeh.pazuki@imperial.ac.uk)  
 **Lab:** Rodrigo Ledesma-Amaro Lab (RLA Lab), Department of Bioengineering, Imperial College London  
 **Bezos Centre for Sustainable Protein**
@@ -825,19 +825,23 @@ npm run dev   # → http://localhost:3000
 cd pipelines
 python -m indexing.build_index --config configs/corpus.rlalab.toml
 
-# 5. Run tests
-cd backend && python -m pytest tests
-cd ../frontend && npm run test && npm run type-check
+# 5. Run ALL tests — backend unit + E2E + frontend unit (MANDATORY before any PR or merge)
+cd backend && .venv/bin/python -m pytest tests/ -v --tb=short
+cd ../frontend && npm test -- --run && npm run type-check
 ```
+
+**Test gate rule:** After implementing any feature, fix, or refactor — run the full test suite above. No flaky test results are acceptable: every test must pass deterministically. If a test flickers, fix the test root cause before proceeding.
 
 Implementation notes for agents:
 
+- Always use `backend/.venv/bin/python` (Python 3.12) — not any other virtualenv. Python 3.13 (.venv-1) is incompatible with the torch/transformers pin.
 - First backend startup downloads PubMedBERT weights into `backend/model_cache` if they are missing.
 - The supported local runtime currently relies on `torch 2.2.x` plus `transformers 4.51.x`; if a machine has a newer `transformers` installed already, reinstall backend deps with `pip install -e ".[dev]" --upgrade` before debugging unrelated startup failures.
 - The supported password-hashing stack currently relies on `passlib[bcrypt]` with `bcrypt<4.1`; do not widen that constraint without revalidating user creation and login flows.
 - Integration tests must override `deps.get_embedding_model` and `deps.get_llm_provider`; otherwise tests will try to instantiate the real embedding model and external provider client.
-- The expanded automated test suite currently lives in `backend/tests/` and `frontend/src/app/login/page.test.tsx` with Vitest config in `frontend/vitest.config.ts`.
+- The full automated test suite lives in `backend/tests/` (89 tests) and `frontend/src/` (28 tests). See §20 for test file inventory.
 - If Homebrew installs `pgvector` without exposing `vector.control` to PostgreSQL 16, build it manually with `make PG_CONFIG=$(brew --prefix postgresql@16)/bin/pg_config && make install ...` before troubleshooting Alembic or app startup.
+- Before writing any new test or async code, read `mistakes.md` in the repo root for known pitfalls.
 
 ---
 
@@ -923,3 +927,46 @@ If you are an AI agent beginning implementation of this project:
 9. **Run evaluation** after the pipeline is working (see `evaluation/` and `docs/evaluation-guidelines.md`).
 
 Read `docs/evaluation-guidelines.md` before starting frontend polish — evaluation results may change retrieval parameters.
+
+---
+
+## 20. Test Suite Inventory
+
+**Backend** (run with `backend/.venv/bin/python -m pytest tests/ -v`):
+
+| File | What it covers |
+| ------ | --------------- |
+| `tests/test_security.py` | `hash_password`, `verify_password`, `create_access_token`, `decode_access_token` |
+| `tests/test_citations.py` | `build_sources`: deduplication, snippet truncation, URL construction |
+| `tests/test_prompts.py` | `get_system_prompt`, `build_context_block` |
+| `tests/test_pipeline.py` | `_format_exception_message`, `_chunk_to_dict`, `run_rag_stream` events |
+| `tests/test_retrieval.py` | `_reciprocal_rank_fusion`, `_apply_filters` |
+| `tests/test_resilience.py` | `_is_llm_retryable`, `pubmed_retry`, `llm_retry` |
+| `tests/test_e2e.py` | Auth (login/logout/me/inactive), session CRUD, feedback, search, admin gate |
+| `tests/test_api_integration.py` | Full SSE streaming, auto-title, analytics, search |
+| `tests/test_build_index.py` | Embedding dimension validation |
+| `tests/test_eval_runner.py` | SSE stream parser |
+| `tests/test_pmc_fulltext.py` | PMC XML metadata/text extraction |
+| `tests/test_pubmed_ingester.py` | PubMed query builder, incremental checkpoint |
+
+**Frontend** (run with `npm test -- --run` in `frontend/`):
+
+| File | What it covers |
+| ------ | --------------- |
+| `src/lib/api.test.ts` | All API client functions: login, logout, sessions CRUD, streaming, analytics, feedback |
+| `src/app/login/page.test.tsx` | Login form: success redirect, error display |
+| `src/components/chat/ChatClient.test.tsx` | Markdown rendering, rename, delete from context menu |
+
+---
+
+## 21. Mistakes Reference
+
+`mistakes.md` in the repository root tracks recurring implementation mistakes with root cause and prevention rules.
+
+**Mandatory:** AI agents must read `mistakes.md` before writing:
+
+- Any test involving `async def` or fixtures that yield.
+- Any monkeypatch of a function that is `await`-ed in production code.
+- Any code that touches the vector index, embedding dimensions, or ORM relationships.
+
+**Update rule:** After every 5 user requests in a session (or after discovering a new recurring pattern), the agent must review the session's work, identify patterns that could have been prevented with prior knowledge, and append them to `mistakes.md`.

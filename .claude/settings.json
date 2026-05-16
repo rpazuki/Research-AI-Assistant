@@ -4,7 +4,11 @@
       "Bash(.venv/bin/python -c \"from app.main import app; print\\('Backend imports OK'\\)\")",
       "Bash(docker info *)",
       "Bash(pg_isready)",
-      "Bash(psql --version)"
+      "Bash(psql --version)",
+      "Bash(npm test *)",
+      "Bash(.venv/bin/python -m pytest tests/test_security.py tests/test_citations.py tests/test_prompts.py tests/test_pipeline.py tests/test_retrieval.py tests/test_resilience.py -v --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/test_e2e.py -v --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/ -v --tb=short)"
     ]
   }
 }
