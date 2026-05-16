@@ -20,7 +20,8 @@
         "printf": true,
         "/Users/roozbeh/homebrew/opt/postgresql@16/bin/pg_ctl": true,
         "/Users/roozbeh/homebrew/opt/postgresql@16/bin/pg_isready": true,
-        "./.venv/bin/python": true
+        "./.venv/bin/python": true,
+        "/Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/backend/.venv/bin/python": true
     },
     "python.terminal.useEnvFile": true
 }

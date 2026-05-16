@@ -153,3 +153,110 @@ docker-compose.prod.yml                 (new)
 ### Remaining notable limitations
 - Chat answer generation still depends on external Anthropic credentials and a populated corpus; the empty local database only validates the shell and session flow, not scientific answer quality
 - Persistent multi-embedding indexing is still intentionally blocked by the fixed `vector(768)` schema
+
+---
+
+## Session continuation: 2026-05-16
+
+### What was done
+
+#### Backend
+- **`backend/app/schemas/chat.py`**
+  - Added `ChatSessionUpdate` with validation for trimmed non-empty titles and max length (`120` chars).
+- **`backend/app/db/crud.py`**
+  - Added `update_chat_session_title()` to persist session title changes.
+  - Added `get_message_count_for_session()` to support first-exchange checks.
+- **`backend/app/api/routes/chat.py`**
+  - Added `PATCH /api/v1/chat/sessions/{session_id}` for user-driven chat renaming.
+  - Added first-exchange auto-title logic in streaming message flow:
+    - only runs when there are no prior messages and session title is empty.
+    - generates a concise title from first user message + assistant response.
+    - persists title without disrupting chat stream if generation fails.
+  - Added `_generate_session_title()` and `_sanitize_title()` helpers.
+
+#### Frontend
+- **`frontend/package.json`**
+  - Added markdown dependencies: `react-markdown` and `remark-gfm`.
+- **`frontend/src/app/api/backend/[...path]/route.ts`**
+  - Added `PATCH` proxy support so browser UI can call the backend rename endpoint via the same auth flow.
+- **`frontend/src/lib/api.ts`**
+  - Added `updateSessionTitle(sessionId, title)` API helper.
+- **`frontend/src/components/chat/ChatClient.tsx`**
+  - Render assistant replies as formatted markdown (`ReactMarkdown` + GFM).
+  - Added inline session title rename UX in sidebar:
+    - clickable `Rename` action.
+    - inline input with Enter save, Escape cancel, blur save.
+    - client-side empty-title guard and API error display.
+  - Preserved auto-refresh of sessions after streaming `done` event so AI-generated titles appear automatically.
+
+#### Tests
+- **`backend/tests/test_api_integration.py`**
+  - Added endpoint test for `PATCH /chat/sessions/{id}`.
+  - Added first-exchange auto-title streaming test.
+  - Added resilience test confirming stream still completes when auto-title is unavailable.
+  - Updated existing streaming tests to account for new first-exchange title-check path.
+- **`frontend/src/components/chat/ChatClient.test.tsx`** (new)
+  - Added markdown rendering test for assistant content.
+  - Added inline rename interaction test.
+- **`frontend/vitest.setup.ts`**
+  - Added `scrollIntoView` mock for jsdom compatibility in chat component tests.
+
+### Validation
+- Frontend:
+  - `npm run test` → `4 passed`
+  - `npm run type-check` → passed
+- Backend:
+  - `pytest tests/test_api_integration.py` → `9 passed`
+  - `pytest tests` → `17 passed`
+
+### Files touched this session
+```
+backend/app/api/routes/chat.py                  (modified)
+backend/app/db/crud.py                          (modified)
+backend/app/schemas/chat.py                     (modified)
+backend/tests/test_api_integration.py           (modified)
+frontend/package.json                           (modified)
+frontend/package-lock.json                      (modified)
+frontend/src/app/api/backend/[...path]/route.ts (modified)
+frontend/src/components/chat/ChatClient.tsx     (modified)
+frontend/src/components/chat/ChatClient.test.tsx(new)
+frontend/src/lib/api.ts                         (modified)
+frontend/vitest.setup.ts                        (modified)
+```
+
+---
+
+## Session continuation: 2026-05-16 (Markdown UX refinement)
+
+### What was done
+
+#### Frontend
+- **`frontend/src/components/chat/ChatClient.tsx`**
+  - Improved rename save behavior to avoid Enter/blur race conditions:
+    - pressing Enter now uses the current input value directly,
+    - blur-save is skipped when Enter/Escape already handled the action,
+    - duplicate save attempts are guarded while a save is in progress.
+  - Enabled code-block syntax highlighting in markdown replies with `rehype-highlight`.
+  - Replaced minimal prose utility usage with a dedicated markdown theme class (`assistant-markdown`).
+- **`frontend/src/app/globals.css`**
+  - Added a richer markdown stylesheet for assistant output:
+    - improved heading hierarchy and spacing,
+    - list, table, blockquote, and inline-code readability,
+    - fenced code block framing and scroll behavior,
+    - imported `highlight.js` GitHub theme for syntax colors.
+- **`frontend/package.json`**
+  - Added `rehype-highlight` dependency.
+
+### Validation
+- Frontend:
+  - `npm install` → dependencies updated successfully
+  - `npm run test` → `4 passed`
+  - `npm run type-check` → passed
+
+### Files touched in this continuation
+```
+frontend/package.json                       (modified)
+frontend/package-lock.json                  (modified)
+frontend/src/app/globals.css               (modified)
+frontend/src/components/chat/ChatClient.tsx(modified)
+```

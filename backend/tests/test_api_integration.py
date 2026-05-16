@@ -207,6 +207,9 @@ async def test_chat_streaming_endpoint_emits_sse_and_persists_messages(api_clien
         created_messages.append(kwargs)
         return SimpleNamespace(id=uuid.uuid4())
 
+    async def fake_get_message_count_for_session(_db_obj, _session_id):
+        return 2
+
     async def fake_run_rag_stream(**_kwargs):
         yield ("token", "Hello", None)
         yield (
@@ -222,6 +225,7 @@ async def test_chat_streaming_endpoint_emits_sse_and_persists_messages(api_clien
 
     monkeypatch.setattr("app.db.crud.get_session", fake_get_session)
     monkeypatch.setattr("app.db.crud.create_chat_message", fake_create_chat_message)
+    monkeypatch.setattr("app.db.crud.get_message_count_for_session", fake_get_message_count_for_session)
     monkeypatch.setattr("app.api.routes.chat.run_rag_stream", fake_run_rag_stream)
 
     response = await client.post(
@@ -253,12 +257,16 @@ async def test_chat_streaming_endpoint_surfaces_blank_exceptions(api_client, mon
     async def fake_create_chat_message(_db_obj, **_kwargs):
         return SimpleNamespace(id=uuid.uuid4())
 
+    async def fake_get_message_count_for_session(_db_obj, _session_id):
+        return 2
+
     async def fake_run_rag_stream(**_kwargs):
         raise SilentError()
         yield
 
     monkeypatch.setattr("app.db.crud.get_session", fake_get_session)
     monkeypatch.setattr("app.db.crud.create_chat_message", fake_create_chat_message)
+    monkeypatch.setattr("app.db.crud.get_message_count_for_session", fake_get_message_count_for_session)
     monkeypatch.setattr("app.api.routes.chat.run_rag_stream", fake_run_rag_stream)
 
     response = await client.post(
@@ -313,3 +321,147 @@ async def test_get_session_returns_messages_without_lazy_loading_errors(
     assert body["id"] == str(session_id)
     assert body["messages"][0]["content"] == "Grounded answer"
     assert body["messages"][0]["sources"][0]["pmid"] == "1234"
+
+
+@pytest.mark.asyncio
+async def test_update_session_title_endpoint(api_client, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, user, _db = api_client
+    session_id = uuid.uuid4()
+    created_at = datetime.now(timezone.utc)
+    session = SimpleNamespace(
+        id=session_id,
+        user_id=user.id,
+        title="Untitled Chat",
+        mode="researcher",
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    saved_titles: list[str] = []
+
+    async def fake_get_session(_db_obj, requested_session_id):
+        assert requested_session_id == session_id
+        return session
+
+    async def fake_update_chat_session_title(_db_obj, session, title: str):
+        saved_titles.append(title)
+        session.title = title
+        return session
+
+    monkeypatch.setattr("app.db.crud.get_session", fake_get_session)
+    monkeypatch.setattr("app.db.crud.update_chat_session_title", fake_update_chat_session_title)
+
+    response = await client.patch(
+        f"/api/v1/chat/sessions/{session_id}",
+        json={"title": "  Updated title  "},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(session_id)
+    assert body["title"] == "Updated title"
+    assert saved_titles == ["Updated title"]
+
+
+@pytest.mark.asyncio
+async def test_chat_streaming_auto_titles_first_exchange(api_client, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, user, _db = api_client
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        mode="researcher",
+        title="",
+    )
+    updated_titles: list[str] = []
+
+    async def fake_get_session(_db_obj, session_id):
+        assert session_id == session.id
+        return session
+
+    async def fake_create_chat_message(_db_obj, **_kwargs):
+        return SimpleNamespace(id=uuid.uuid4())
+
+    async def fake_run_rag_stream(**_kwargs):
+        yield ("token", "First answer sentence.", None)
+        yield (
+            "done",
+            {"retrieved_chunk_ids": [str(uuid.uuid4())], "llm_model": "claude-sonnet-4-6", "latency_ms": 12},
+            None,
+        )
+
+    async def fake_get_message_count_for_session(_db_obj, session_id):
+        assert session_id == session.id
+        return 0
+
+    async def fake_generate_session_title(**kwargs):
+        assert kwargs["user_query"] == "What is known?"
+        assert "First answer sentence." in kwargs["assistant_response"]
+        return "Auto title"
+
+    async def fake_update_chat_session_title(_db_obj, session, title: str):
+        updated_titles.append(title)
+        return session
+
+    monkeypatch.setattr("app.db.crud.get_session", fake_get_session)
+    monkeypatch.setattr("app.db.crud.create_chat_message", fake_create_chat_message)
+    monkeypatch.setattr("app.db.crud.get_message_count_for_session", fake_get_message_count_for_session)
+    monkeypatch.setattr("app.db.crud.update_chat_session_title", fake_update_chat_session_title)
+    monkeypatch.setattr("app.api.routes.chat._generate_session_title", fake_generate_session_title)
+    monkeypatch.setattr("app.api.routes.chat.run_rag_stream", fake_run_rag_stream)
+
+    response = await client.post(
+        f"/api/v1/chat/sessions/{session.id}/messages",
+        json={"query": "What is known?", "mode": "researcher"},
+    )
+    assert response.status_code == 200
+    assert '"type": "done"' in response.text
+    assert updated_titles == ["Auto title"]
+
+
+@pytest.mark.asyncio
+async def test_chat_streaming_continues_when_auto_title_generation_fails(
+    api_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, user, _db = api_client
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        mode="researcher",
+        title=None,
+    )
+    updated_titles: list[str] = []
+
+    async def fake_get_session(_db_obj, session_id):
+        assert session_id == session.id
+        return session
+
+    async def fake_create_chat_message(_db_obj, **_kwargs):
+        return SimpleNamespace(id=uuid.uuid4())
+
+    async def fake_run_rag_stream(**_kwargs):
+        yield ("token", "A response.", None)
+        yield ("done", {"retrieved_chunk_ids": [], "llm_model": "claude-sonnet-4-6", "latency_ms": 7}, None)
+
+    async def fake_get_message_count_for_session(_db_obj, session_id):
+        assert session_id == session.id
+        return 0
+
+    async def fake_generate_session_title(**_kwargs):
+        return None
+
+    async def fake_update_chat_session_title(_db_obj, session, title: str):
+        updated_titles.append(title)
+        return session
+
+    monkeypatch.setattr("app.db.crud.get_session", fake_get_session)
+    monkeypatch.setattr("app.db.crud.create_chat_message", fake_create_chat_message)
+    monkeypatch.setattr("app.db.crud.get_message_count_for_session", fake_get_message_count_for_session)
+    monkeypatch.setattr("app.db.crud.update_chat_session_title", fake_update_chat_session_title)
+    monkeypatch.setattr("app.api.routes.chat._generate_session_title", fake_generate_session_title)
+    monkeypatch.setattr("app.api.routes.chat.run_rag_stream", fake_run_rag_stream)
+
+    response = await client.post(
+        f"/api/v1/chat/sessions/{session.id}/messages",
+        json={"query": "What is known?", "mode": "researcher"},
+    )
+    assert response.status_code == 200
+    assert '"type": "done"' in response.text
+    assert updated_titles == []

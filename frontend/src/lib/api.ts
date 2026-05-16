@@ -80,6 +80,16 @@ export async function getSession(sessionId: string) {
   }>(`/chat/sessions/${sessionId}`);
 }
 
+export async function updateSessionTitle(sessionId: string, title: string) {
+  return apiFetch<{ id: string; title: string | null; mode: string; updated_at: string }>(
+    `/chat/sessions/${sessionId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }
+  );
+}
+
 // ── Streaming chat ─────────────────────────────────────────────────────────────
 
 /**

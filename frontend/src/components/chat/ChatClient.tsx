@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
+import remarkGfm from "remark-gfm";
 
 import {
   createSession,
@@ -9,6 +12,7 @@ import {
   listSessions,
   logout,
   streamMessage,
+  updateSessionTitle,
 } from "@/lib/api";
 import type { ChatMessage, Source } from "@/types";
 
@@ -61,6 +65,10 @@ export default function ChatClient({
   const [activeSources, setActiveSources] = useState<Source[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+  const [isSavingTitle, setIsSavingTitle] = useState(false);
+  const skipBlurSaveRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -91,6 +99,11 @@ export default function ChatClient({
       }
       setError(err instanceof Error ? err.message : "Failed to load sessions");
     }
+  }
+
+  function getDisplaySessionTitle(session: SessionSummary) {
+    const cleaned = session.title?.trim();
+    return cleaned ? cleaned : "Untitled Chat";
   }
 
   async function loadSession(sessionId: string) {
@@ -134,6 +147,46 @@ export default function ChatClient({
 
   function handleSelectSession(sessionId: string) {
     router.push(`/chat/${sessionId}`);
+  }
+
+  function handleStartTitleEdit(session: SessionSummary) {
+    setEditingSessionId(session.id);
+    setEditingTitle(session.title?.trim() ?? "");
+    setError(null);
+  }
+
+  function handleCancelTitleEdit() {
+    setEditingSessionId(null);
+    setEditingTitle("");
+  }
+
+  async function handleSaveTitle(sessionId: string, rawTitle?: string) {
+    if (isSavingTitle) {
+      return;
+    }
+
+    const nextTitle = (rawTitle ?? editingTitle).trim();
+    if (!nextTitle) {
+      setError("Chat title cannot be empty");
+      return;
+    }
+
+    try {
+      setIsSavingTitle(true);
+      await updateSessionTitle(sessionId, nextTitle);
+      setSessions((prev) =>
+        prev.map((session) =>
+          session.id === sessionId ? { ...session, title: nextTitle } : session
+        )
+      );
+      setEditingSessionId(null);
+      setEditingTitle("");
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update title");
+    } finally {
+      setIsSavingTitle(false);
+    }
   }
 
   async function handleSend() {
@@ -267,19 +320,67 @@ export default function ChatClient({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {sessions.map((session) => (
-            <button
-              key={session.id}
-              onClick={() => handleSelectSession(session.id)}
-              className={`w-full text-left rounded-lg px-3 py-2 text-sm truncate transition ${
-                session.id === activeSessionId
-                  ? "bg-blue-50 text-blue-700"
-                  : "text-gray-700 hover:bg-gray-100"
-              }`}
-            >
-              {session.title ?? "Untitled Chat"}
-            </button>
-          ))}
+          {sessions.map((session) => {
+            const isActive = session.id === activeSessionId;
+            const isEditing = editingSessionId === session.id;
+            return (
+              <div
+                key={session.id}
+                className={`rounded-lg px-2 py-1 transition ${
+                  isActive ? "bg-blue-50" : "hover:bg-gray-100"
+                }`}
+              >
+                {isEditing ? (
+                  <input
+                    autoFocus
+                    value={editingTitle}
+                    disabled={isSavingTitle}
+                    onChange={(e) => setEditingTitle(e.target.value)}
+                    onBlur={(e) => {
+                      if (skipBlurSaveRef.current) {
+                        skipBlurSaveRef.current = false;
+                        return;
+                      }
+                      void handleSaveTitle(session.id, e.currentTarget.value);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        skipBlurSaveRef.current = true;
+                        void handleSaveTitle(session.id, e.currentTarget.value);
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        skipBlurSaveRef.current = true;
+                        handleCancelTitleEdit();
+                      }
+                    }}
+                    className="w-full rounded-md border border-blue-200 bg-white px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    aria-label="Edit chat title"
+                  />
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleSelectSession(session.id)}
+                      className={`flex-1 text-left rounded-md px-1 py-1 text-sm truncate transition ${
+                        isActive ? "text-blue-700" : "text-gray-700"
+                      }`}
+                    >
+                      {getDisplaySessionTitle(session)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStartTitleEdit(session)}
+                      className="rounded-md px-2 py-1 text-xs text-gray-500 hover:text-gray-800"
+                      aria-label={`Rename ${getDisplaySessionTitle(session)}`}
+                    >
+                      Rename
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
         <div className="p-4 border-t space-y-3">
           <select
@@ -324,7 +425,15 @@ export default function ChatClient({
                     : "bg-white border border-gray-200 text-gray-800 rounded-bl-sm shadow-sm"
                 }`}
               >
-                {msg.content}
+                {msg.role === "user" ? (
+                  msg.content
+                ) : (
+                  <div className="assistant-markdown">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                      {msg.content}
+                    </ReactMarkdown>
+                  </div>
+                )}
                 {msg.streaming && (
                   <span className="inline-block ml-1 w-2 h-4 bg-blue-400 animate-pulse rounded-sm" />
                 )}

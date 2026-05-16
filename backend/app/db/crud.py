@@ -10,7 +10,7 @@ All functions accept an AsyncSession argument — never create sessions here.
 import uuid
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ChatMessage, ChatSession, Document, Feedback, User
@@ -67,6 +67,14 @@ async def get_session(db: AsyncSession, session_id: uuid.UUID) -> ChatSession | 
     return result.scalar_one_or_none()
 
 
+async def update_chat_session_title(
+    db: AsyncSession, session: ChatSession, title: str
+) -> ChatSession:
+    session.title = title
+    await db.flush()
+    return session
+
+
 # ── Chat Messages ─────────────────────────────────────────────────────────────
 
 async def create_chat_message(db: AsyncSession, **kwargs) -> ChatMessage:
@@ -85,6 +93,13 @@ async def get_messages_for_session(
         .order_by(ChatMessage.created_at)
     )
     return result.scalars().all()
+
+
+async def get_message_count_for_session(db: AsyncSession, session_id: uuid.UUID) -> int:
+    result = await db.execute(
+        select(func.count(ChatMessage.id)).where(ChatMessage.session_id == session_id)
+    )
+    return int(result.scalar_one() or 0)
 
 
 # ── Feedback ──────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChatMessageRequest(BaseModel):
@@ -37,6 +37,18 @@ class ChatMessageResponse(BaseModel):
 class ChatSessionCreate(BaseModel):
     mode: str = "researcher"
     title: str | None = None
+
+
+class ChatSessionUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Title must not be empty")
+        return cleaned
 
 
 class ChatSessionResponse(BaseModel):

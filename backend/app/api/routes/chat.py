@@ -14,6 +14,7 @@ SSE event format:
 """
 
 import json
+import re
 import time
 import uuid
 
@@ -29,6 +30,7 @@ from app.schemas.chat import (
     ChatMessageRequest,
     ChatSessionCreate,
     ChatSessionResponse,
+    ChatSessionUpdate,
     ChatSessionWithMessages,
 )
 
@@ -80,6 +82,18 @@ async def delete_session(
     await db.delete(session)
 
 
+@router.patch("/sessions/{session_id}", response_model=ChatSessionResponse)
+async def update_session(
+    session_id: uuid.UUID,
+    body: ChatSessionUpdate,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> ChatSessionResponse:
+    session = await _get_owned_session(session_id, current_user.id, db)
+    session = await crud.update_chat_session_title(db, session=session, title=body.title)
+    return ChatSessionResponse.model_validate(session)
+
+
 # ── Streaming chat ────────────────────────────────────────────────────────────
 
 @router.post("/sessions/{session_id}/messages")
@@ -98,6 +112,8 @@ async def post_message(
     The assistant message is saved after streaming completes.
     """
     session = await _get_owned_session(session_id, current_user.id, db)
+    existing_message_count = await crud.get_message_count_for_session(db, session.id)
+    should_auto_title = existing_message_count == 0 and not (session.title or "").strip()
 
     # Save the user message immediately
     await crud.create_chat_message(
@@ -150,6 +166,18 @@ async def post_message(
                         llm_model=llm_model,
                         latency_ms=latency_ms,
                     )
+                    if should_auto_title and full_response:
+                        generated_title = await _generate_session_title(
+                            llm=llm,
+                            user_query=body.query,
+                            assistant_response="".join(full_response),
+                        )
+                        if generated_title:
+                            await crud.update_chat_session_title(
+                                db,
+                                session=session,
+                                title=generated_title,
+                            )
                     payload = json.dumps(
                         {"type": "done", "message_id": str(msg.id), "latency_ms": latency_ms}
                     )
@@ -191,3 +219,42 @@ async def _get_owned_session(
     if session.user_id != user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return session
+
+
+async def _generate_session_title(llm: LLMDep, user_query: str, assistant_response: str) -> str | None:
+    try:
+        title_text, _usage = await llm.complete(
+            system=(
+                "You create concise scientific chat titles. "
+                "Return exactly one short title in plain text, no quotes and no markdown."
+            ),
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Generate a chat title (max 70 chars) based on this first exchange.\n\n"
+                        f"User question: {user_query}\n\n"
+                        f"Assistant answer: {assistant_response}"
+                    ),
+                }
+            ],
+            max_tokens=32,
+            temperature=0.1,
+        )
+    except Exception as exc:
+        log.warning(
+            "chat_auto_title_generation_failed",
+            error=_format_exception_message(exc),
+            exception_type=type(exc).__name__,
+        )
+        return None
+
+    return _sanitize_title(title_text)
+
+
+def _sanitize_title(raw_title: str) -> str | None:
+    cleaned = re.sub(r"\s+", " ", raw_title).strip()
+    cleaned = cleaned.strip("\"'`#*_-:;,.[](){}")
+    if not cleaned:
+        return None
+    return cleaned[:120]
