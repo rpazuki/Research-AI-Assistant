@@ -9,6 +9,7 @@ const push = vi.fn();
 const createSession = vi.fn();
 const getSession = vi.fn();
 const listSessions = vi.fn();
+const deleteSession = vi.fn();
 const logout = vi.fn();
 const streamMessage = vi.fn();
 const updateSessionTitle = vi.fn();
@@ -21,6 +22,7 @@ vi.mock("@/lib/api", () => ({
   createSession: (...args: unknown[]) => createSession(...args),
   getSession: (...args: unknown[]) => getSession(...args),
   listSessions: (...args: unknown[]) => listSessions(...args),
+  deleteSession: (...args: unknown[]) => deleteSession(...args),
   logout: (...args: unknown[]) => logout(...args),
   streamMessage: (...args: unknown[]) => streamMessage(...args),
   updateSessionTitle: (...args: unknown[]) => updateSessionTitle(...args),
@@ -32,6 +34,7 @@ describe("ChatClient", () => {
     createSession.mockReset();
     getSession.mockReset();
     listSessions.mockReset();
+    deleteSession.mockReset();
     logout.mockReset();
     streamMessage.mockReset();
     updateSessionTitle.mockReset();
@@ -50,6 +53,7 @@ describe("ChatClient", () => {
       mode: "researcher",
       updated_at: "2026-05-16T00:00:00Z",
     });
+    deleteSession.mockResolvedValue(undefined);
   });
 
   it("renders assistant responses as markdown", async () => {
@@ -76,14 +80,15 @@ describe("ChatClient", () => {
     expect(screen.getByText("Second point")).toBeInTheDocument();
   });
 
-  it("allows renaming a chat title inline", async () => {
+  it("allows renaming a chat title from right-click menu", async () => {
     render(<ChatClient initialSessionId="session-1" />);
 
     await waitFor(() => {
       expect(screen.getByText("Initial title")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Rename Initial title" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Initial title" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
 
     const input = await screen.findByLabelText("Edit chat title");
     fireEvent.change(input, { target: { value: "Updated title" } });
@@ -95,5 +100,25 @@ describe("ChatClient", () => {
     await waitFor(() => {
       expect(screen.getByText("Updated title")).toBeInTheDocument();
     });
+  });
+
+  it("deletes a chat from right-click menu", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<ChatClient initialSessionId="session-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Initial title")).toBeInTheDocument();
+    });
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Initial title" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(deleteSession).toHaveBeenCalledWith("session-1");
+    });
+    expect(push).toHaveBeenCalledWith("/chat");
+
+    confirmSpy.mockRestore();
   });
 });

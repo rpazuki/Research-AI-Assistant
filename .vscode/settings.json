@@ -21,7 +21,11 @@
         "/Users/roozbeh/homebrew/opt/postgresql@16/bin/pg_ctl": true,
         "/Users/roozbeh/homebrew/opt/postgresql@16/bin/pg_isready": true,
         "./.venv/bin/python": true,
-        "/Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/backend/.venv/bin/python": true
+        "/Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/backend/.venv/bin/python": true,
+        "/^cd /Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/backend && python -m pytest tests/test_api_integration\\.py -q 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     },
     "python.terminal.useEnvFile": true
 }

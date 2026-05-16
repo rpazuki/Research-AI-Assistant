@@ -260,3 +260,91 @@ frontend/package-lock.json                  (modified)
 frontend/src/app/globals.css               (modified)
 frontend/src/components/chat/ChatClient.tsx(modified)
 ```
+
+---
+
+## Session continuation: 2026-05-17
+
+### What was done
+
+#### Backend
+- **`backend/app/rag/retrieval.py`** — Fixed NotImplementedError in vector and lexical search:
+  - Replaced invalid `text(...).label(...)` calls in `_vector_search()` with proper SQLAlchemy expression objects:
+    - Now uses `(1 - DocumentChunk.embedding.cosine_distance(...)).label("score")` for vector distance scoring.
+  - Replaced invalid `text(...).label(...)` calls in `_lexical_search()` with proper PostgreSQL FTS expressions:
+    - Now uses `func.to_tsvector()`, `func.plainto_tsquery()`, and `func.ts_rank()` as proper column expressions.
+  - Root cause: SQLAlchemy 2.0+ TextClause objects do not support `.label()`. Only ColumnElement expressions do.
+  - Validated: Backend integration tests still passing after fix.
+
+#### Frontend
+- **`frontend/src/components/chat/ChatClient.tsx`**
+  - Added sidebar visibility toggling with splitters:
+    - State: `showChatList` (left sidebar) and `rightSidebarVisible` (right sources sidebar).
+    - Handlers: `toggleLeftSidebar()` and `toggleRightSidebar()` functions.
+    - Splitter: thin vertical divider (`w-px bg-gray-200`) between sections.
+    - Hide buttons: ✕ button in each sidebar header to collapse independently.
+    - Show button: ☰ icon in top-left of main chat area (visible only when left sidebar is hidden).
+    - Conditional rendering: each section rendered only when visible.
+  - Right sidebar now conditional on both visibility state AND presence of retrieved sources.
+
+### Validation
+- Frontend:
+  - `npm run type-check` → passed
+  - `npm run test` → `4 passed`
+- Backend:
+  - `pytest tests/test_api_integration.py -q` → `9 passed` (retrieval fix validated)
+
+### Files touched in this continuation
+```
+backend/app/rag/retrieval.py                (modified)
+frontend/src/components/chat/ChatClient.tsx (modified)
+```
+
+### User-facing improvements
+1. **Retrieval now works**: Vector and lexical search queries no longer throw NotImplementedError; hybrid RRF retrieval functional.
+2. **Flexible layout**: Users can hide left chat list and/or right sources panel independently to maximize main chat area.
+3. **Visual affordance**: Splitters show where sections can be toggled; ✕ buttons and ☰ menu icon clearly indicate collapse/expand actions.
+
+---
+
+## Session continuation: 2026-05-17 (Sidebar resizing & visibility fixes)
+
+### What was done
+
+#### Frontend
+- **`frontend/src/components/chat/ChatClient.tsx`** — Complete rewrite with full sidebar visibility and resizing features:
+  - State: `showChatList`, `rightSidebarVisible`, `leftSidebarWidth`, `rightSidebarWidth`, drag state flags.
+  - Dynamic width: Left sidebar uses `style={{ width: ${leftSidebarWidth}px }}` and right sidebar uses `style={{ width: ${rightSidebarWidth}px }}`.
+  - **Draggable splitters**: Vertical dividers between left/main and main/right sections:
+    - On `onMouseDown`, set drag flag to `true`.
+    - Mouse move calculates new width from cursor position.
+    - Width clamped: left 200–400px, right 200–500px.
+    - Visual feedback: splitter changes color and shadow on hover (`hover:bg-blue-400`, `cursor-col-resize`).
+  - **Persistent reopen buttons**:
+    - Left sidebar: ☰ menu button ("Chat List") appears in main toolbar when left sidebar hidden.
+    - Right sidebar: 📄 button ("Sources (N)") appears in main toolbar when right sidebar hidden AND sources available.
+    - Both buttons placed in top toolbar for constant visibility.
+  - **Sidebar headers with close buttons**: ✕ close button always visible in both sidebar headers.
+  - Top toolbar: Always-visible row with toggle buttons for both sidebars when they're hidden.
+  - Fixed: Hide button on left sidebar no longer disappears after first use (button always rendered in header).
+
+### Validation
+- Frontend:
+  - `npm run type-check` → passed ✓
+  - `npm run test` → `4 passed` ✓
+
+### User-facing improvements
+1. **Draggable splitters**: Users can now resize sidebar widths by dragging the vertical dividers between sections. Splitter changes color on hover for affordance.
+2. **Persistent reopen buttons**: Both sidebars can be reopened at any time via buttons in the top toolbar (left: ☰ Chat List, right: 📄 Sources).
+3. **No more disappearing hide buttons**: Left sidebar hide button (✕) always stays visible in the sidebar header.
+4. **Full layout flexibility**: Users can:
+   - Hide left sidebar entirely to maximize chat area.
+   - Hide right sidebar entirely to maximize chat area.
+   - Drag splitters to resize each section independently while visible.
+   - Reopen either sidebar on-demand from the top toolbar buttons.
+
+### Files touched
+```
+frontend/src/components/chat/ChatClient.tsx (completely rewritten)
+```
+

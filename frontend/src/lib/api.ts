@@ -22,6 +22,9 @@ async function apiFetch<T>(
     const body = await res.json().catch(() => ({}));
     throw new Error(body?.detail ?? `API error ${res.status}`);
   }
+  if (res.status === 204) {
+    return undefined as T;
+  }
   return res.json() as Promise<T>;
 }
 
@@ -78,6 +81,12 @@ export async function getSession(sessionId: string) {
       created_at: string;
     }>;
   }>(`/chat/sessions/${sessionId}`);
+}
+
+export async function deleteSession(sessionId: string) {
+  await apiFetch<void>(`/chat/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
 }
 
 export async function updateSessionTitle(sessionId: string, title: string) {
