@@ -353,6 +353,48 @@ def test_admin_only_endpoint_rejects_researcher() -> None:
     assert exc_info.value.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_admin_user_management_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+    admin = make_user(role="admin")
+    researcher = make_user()
+    researcher.id = uuid.uuid4()
+    researcher.email = "researcher@example.com"
+    researcher.full_name = "Researcher"
+
+    async def fake_list_users(_db):
+        return [admin, researcher]
+
+    async def fake_get_user_by_id(_db, user_id):
+        if user_id == researcher.id:
+            return researcher
+        if user_id == admin.id:
+            return admin
+        return None
+
+    async def fake_update_user_active(_db, user, is_active):
+        user.is_active = is_active
+        return user
+
+    monkeypatch.setattr("app.api.routes.admin.crud.list_users", fake_list_users)
+    monkeypatch.setattr("app.api.routes.admin.crud.get_user_by_id", fake_get_user_by_id)
+    monkeypatch.setattr("app.api.routes.admin.crud.update_user_active", fake_update_user_active)
+
+    async with _make_client(admin) as (c, _u, _db):
+        list_resp = await c.get("/api/v1/admin/users")
+        detail_resp = await c.get(f"/api/v1/admin/users/{researcher.id}")
+        update_resp = await c.patch(
+            f"/api/v1/admin/users/{researcher.id}",
+            json={"is_active": False},
+        )
+
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()) == 2
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["email"] == "researcher@example.com"
+    assert update_resp.status_code == 200
+    assert update_resp.json()["is_active"] is False
+
+
 # ── Feedback ──────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

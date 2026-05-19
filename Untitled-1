@@ -1,0 +1,9 @@
+python scripts/create_user.py \
+  --email r.pazuki12@imperial.ac.uk \
+  --password 123456@654321 \
+  --role admin
+
+
+lsof -tiTCP:8000 -sTCP:LISTEN | xargs -r kill
+cd /Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/backend
+/Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000

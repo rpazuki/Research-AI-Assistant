@@ -30,6 +30,17 @@ def make_user() -> User:
     )
 
 
+def make_admin_user() -> User:
+    return User(
+        id=uuid.uuid4(),
+        email="admin@example.com",
+        hashed_password="hashed",
+        full_name="Admin",
+        role="admin",
+        is_active=True,
+    )
+
+
 @pytest.fixture
 async def api_client():
     user = make_user()
@@ -191,6 +202,74 @@ async def test_analytics_endpoints_return_expected_shapes(api_client, monkeypatc
     assert mesh_terms.json()[0]["term"] == "oleaginous yeast"
     assert corpus_stats.json()["chunk_count"] == 31
     assert topics.json()[0]["topic"] == "lipid metabolism"
+
+
+@pytest.mark.asyncio
+async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytest.MonkeyPatch) -> None:
+    admin_user = make_admin_user()
+    researcher = make_user()
+    db = DummyDB()
+
+    async def override_current_user():
+        return admin_user
+
+    async def override_db():
+        yield db
+
+    async def fake_list_users(_db_obj):
+        return [admin_user, researcher]
+
+    async def fake_get_user_by_id(_db_obj, user_id):
+        if user_id == researcher.id:
+            return researcher
+        if user_id == admin_user.id:
+            return admin_user
+        return None
+
+    async def fake_update_user_active(_db_obj, user, is_active: bool):
+        user.is_active = is_active
+        return user
+
+    app.dependency_overrides[deps.get_current_user] = override_current_user
+    app.dependency_overrides[deps.get_db] = override_db
+    monkeypatch.setattr("app.api.routes.admin.crud.list_users", fake_list_users)
+    monkeypatch.setattr("app.api.routes.admin.crud.get_user_by_id", fake_get_user_by_id)
+    monkeypatch.setattr("app.api.routes.admin.crud.update_user_active", fake_update_user_active)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        users_response = await client.get("/api/v1/admin/users")
+        assert users_response.status_code == 200
+        assert [user["email"] for user in users_response.json()] == [
+            "admin@example.com",
+            "researcher@example.com",
+        ]
+
+        user_response = await client.get(f"/api/v1/admin/users/{researcher.id}")
+        assert user_response.status_code == 200
+        assert user_response.json()["id"] == str(researcher.id)
+
+        update_response = await client.patch(
+            f"/api/v1/admin/users/{researcher.id}",
+            json={"is_active": False},
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["is_active"] is False
+
+        missing_response = await client.get(f"/api/v1/admin/users/{uuid.uuid4()}")
+        assert missing_response.status_code == 404
+
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_admin_user_endpoints_require_admin_role(api_client) -> None:
+    client, _user, _db = api_client
+
+    response = await client.get("/api/v1/admin/users")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Admin access required"
 
 
 @pytest.mark.asyncio

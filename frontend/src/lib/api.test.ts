@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createSession,
   deleteSession,
+  getAdminUser,
   getCorpusStats,
   getJournals,
   getMeshTerms,
@@ -19,11 +20,13 @@ import {
   getTemporalData,
   getTopics,
   listSessions,
+  listAdminUsers,
   login,
   logout,
   search,
   streamMessage,
   submitFeedback,
+  updateAdminUserStatus,
   updateSessionTitle,
 } from "./api";
 
@@ -105,6 +108,63 @@ describe("getMe", () => {
   it("throws on 401", async () => {
     mockFetch(401, { detail: "Unauthorized" }, false);
     await expect(getMe()).rejects.toThrow("Unauthorized");
+  });
+});
+
+// ── admin ─────────────────────────────────────────────────────────────────────
+
+describe("admin user API", () => {
+  it("lists admin users", async () => {
+    mockFetch(200, [
+      {
+        id: "u1",
+        email: "admin@lab.ac.uk",
+        full_name: "Admin",
+        role: "admin",
+        is_active: true,
+      },
+    ]);
+
+    const users = await listAdminUsers();
+
+    expect(users).toHaveLength(1);
+    expect(users[0].email).toBe("admin@lab.ac.uk");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe("/api/backend/admin/users");
+  });
+
+  it("fetches one admin user", async () => {
+    mockFetch(200, {
+      id: "u1",
+      email: "researcher@lab.ac.uk",
+      full_name: "Researcher",
+      role: "researcher",
+      is_active: true,
+    });
+
+    const user = await getAdminUser("u1");
+
+    expect(user.id).toBe("u1");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      "/api/backend/admin/users/u1"
+    );
+  });
+
+  it("updates admin user active status", async () => {
+    mockFetch(200, {
+      id: "u1",
+      email: "researcher@lab.ac.uk",
+      full_name: "Researcher",
+      role: "researcher",
+      is_active: false,
+    });
+
+    const user = await updateAdminUserStatus("u1", false);
+
+    expect(user.is_active).toBe(false);
+    const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe("/api/backend/admin/users/u1");
+    expect(call[1].method).toBe("PATCH");
+    expect(JSON.parse(call[1].body)).toEqual({ is_active: false });
   });
 });
 

@@ -13,7 +13,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, chat, search, analytics, feedback
+from app.api.routes import admin, auth, chat, search, analytics, feedback
 from app.core.config import settings
 from app.core.logging import configure_logging
 
@@ -56,6 +56,7 @@ app.add_middleware(
 PREFIX = "/api/v1"
 
 app.include_router(auth.router, prefix=PREFIX)
+app.include_router(admin.router, prefix=PREFIX)
 app.include_router(chat.router, prefix=PREFIX)
 app.include_router(search.router, prefix=PREFIX)
 app.include_router(analytics.router, prefix=PREFIX)

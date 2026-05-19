@@ -1,4 +1,4 @@
-import type { Source } from "@/types";
+import type { Source, User } from "@/types";
 
 /**
  * Typed API client for the frontend proxy layer.
@@ -48,9 +48,24 @@ export async function logout() {
 }
 
 export async function getMe() {
-  return apiFetch<{ id: string; email: string; full_name: string | null; role: string }>(
-    "/auth/me"
-  );
+  return apiFetch<User>("/auth/me");
+}
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+export async function listAdminUsers() {
+  return apiFetch<User[]>("/admin/users");
+}
+
+export async function getAdminUser(userId: string) {
+  return apiFetch<User>(`/admin/users/${userId}`);
+}
+
+export async function updateAdminUserStatus(userId: string, isActive: boolean) {
+  return apiFetch<User>(`/admin/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_active: isActive }),
+  });
 }
 
 // ── Chat Sessions ─────────────────────────────────────────────────────────────

@@ -48,4 +48,17 @@ describe("LoginPage", () => {
 
     await waitFor(() => expect(screen.getByText("Invalid credentials")).toBeInTheDocument());
   });
+
+  it("redirects inactive users to the deactivated account page", async () => {
+    login.mockRejectedValue(new Error("Account is inactive. Contact your lab admin."));
+
+    render(<LoginPage />);
+
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "user@example.com" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/account-deactivated"));
+    expect(screen.queryByText("Account is inactive. Contact your lab admin.")).not.toBeInTheDocument();
+  });
 });

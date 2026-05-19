@@ -30,7 +30,12 @@ export default function LoginPage() {
       router.push("/chat");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      const message = err instanceof Error ? err.message : "Login failed";
+      if (message.toLowerCase().includes("inactive")) {
+        router.push("/account-deactivated");
+        return;
+      }
+      setError(message);
     } finally {
       setLoading(false);
     }

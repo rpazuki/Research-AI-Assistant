@@ -42,6 +42,17 @@ async def create_user(db: AsyncSession, data: UserCreate) -> User:
     return user
 
 
+async def list_users(db: AsyncSession) -> Sequence[User]:
+    result = await db.execute(select(User).order_by(User.email))
+    return result.scalars().all()
+
+
+async def update_user_active(db: AsyncSession, user: User, is_active: bool) -> User:
+    user.is_active = is_active
+    await db.flush()
+    return user
+
+
 # ── Chat Sessions ─────────────────────────────────────────────────────────────
 
 async def create_chat_session(
