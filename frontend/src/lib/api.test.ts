@@ -11,8 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createSession,
   deleteSession,
+  acceptInvitation,
   getAdminUser,
   getCorpusStats,
+  getInvitation,
   getJournals,
   getMeshTerms,
   getMe,
@@ -24,6 +26,7 @@ import {
   login,
   logout,
   search,
+  sendInvitations,
   streamMessage,
   submitFeedback,
   updateAdminUserStatus,
@@ -165,6 +168,62 @@ describe("admin user API", () => {
     expect(call[0]).toBe("/api/backend/admin/users/u1");
     expect(call[1].method).toBe("PATCH");
     expect(JSON.parse(call[1].body)).toEqual({ is_active: false });
+  });
+
+  it("sends invitations", async () => {
+    mockFetch(200, {
+      sent: [{ email: "new@lab.ac.uk", status: "sent", expires_at: "2026-05-27T00:00:00Z", detail: null }],
+      failed: [],
+    });
+
+    const result = await sendInvitations(["new@lab.ac.uk"], "Join", "Use {invite_link}");
+
+    expect(result.sent[0].email).toBe("new@lab.ac.uk");
+    const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe("/api/backend/admin/invitations");
+    expect(call[1].method).toBe("POST");
+    expect(JSON.parse(call[1].body)).toEqual({
+      recipient_emails: ["new@lab.ac.uk"],
+      subject: "Join",
+      template: "Use {invite_link}",
+    });
+  });
+});
+
+// ── invitations ──────────────────────────────────────────────────────────────
+
+describe("invitation acceptance API", () => {
+  it("loads an invitation through the public auth route", async () => {
+    mockFetch(200, { email: "new@lab.ac.uk", expires_at: "2026-05-27T00:00:00Z" });
+
+    const invitation = await getInvitation("token-1");
+
+    expect(invitation.email).toBe("new@lab.ac.uk");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      "/api/auth/invitations/token-1"
+    );
+  });
+
+  it("accepts an invitation through the public auth route", async () => {
+    mockFetch(201, {
+      id: "u1",
+      email: "new@lab.ac.uk",
+      full_name: "New Researcher",
+      role: "researcher",
+      is_active: true,
+    });
+
+    const user = await acceptInvitation("token-1", "New Researcher", "password123", "password123");
+
+    expect(user.email).toBe("new@lab.ac.uk");
+    const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe("/api/auth/invitations/token-1");
+    expect(call[1].method).toBe("POST");
+    expect(JSON.parse(call[1].body)).toEqual({
+      full_name: "New Researcher",
+      password: "password123",
+      password_confirm: "password123",
+    });
   });
 });
 

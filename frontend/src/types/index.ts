@@ -8,6 +8,23 @@ export interface User {
   is_active: boolean;
 }
 
+export interface InvitationSendItem {
+  email: string;
+  status: "sent" | "failed";
+  expires_at: string | null;
+  detail: string | null;
+}
+
+export interface InvitationSendResponse {
+  sent: InvitationSendItem[];
+  failed: InvitationSendItem[];
+}
+
+export interface InvitationPreview {
+  email: string;
+  expires_at: string;
+}
+
 export interface Source {
   pmid: string | null;
   doi: string | null;

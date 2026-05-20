@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     app_env: str = "development"  # 'development' | 'production'
     log_level: str = "INFO"
     cors_origins: list[str] = ["http://localhost:3000"]
+    app_public_url: str = "http://localhost:3000"
 
     # ── Database ──────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/rlalab_ai"
@@ -41,6 +42,14 @@ class Settings(BaseSettings):
     # ── Auth ──────────────────────────────────────────────────────────────
     secret_key: str = "CHANGE_ME_IN_PRODUCTION"  # 32-byte hex string
     access_token_expire_minutes: int = 480  # 8 hours
+    invitation_token_expire_hours: int = 168  # 7 days
+
+    # ── Email / SendGrid ─────────────────────────────────────────────────
+    sendgrid_api_key: str = ""
+    sendgrid_from_email: str = ""
+    sendgrid_from_name: str = "RLALab AI Assistant"
+    sendgrid_api_url: str = "https://api.sendgrid.com/v3/mail/send"
+    sendgrid_timeout_s: int = 30
 
     # ── LLM Provider ──────────────────────────────────────────────────────
     llm_provider: str = "anthropic"  # 'anthropic' | extend as needed

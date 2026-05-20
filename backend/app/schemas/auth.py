@@ -1,7 +1,9 @@
 """app/schemas/auth.py — Auth request/response schemas."""
 
 import uuid
-from pydantic import BaseModel, EmailStr
+from datetime import datetime
+
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -30,3 +32,20 @@ class UserResponse(BaseModel):
     is_active: bool
 
     model_config = {"from_attributes": True}
+
+
+class InvitationPreview(BaseModel):
+    email: EmailStr
+    expires_at: datetime
+
+
+class InvitationAcceptRequest(BaseModel):
+    full_name: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    password_confirm: str = Field(min_length=8, max_length=200)
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> "InvitationAcceptRequest":
+        if self.password != self.password_confirm:
+            raise ValueError("Passwords do not match")
+        return self

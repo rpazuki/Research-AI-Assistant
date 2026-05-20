@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import httpx
@@ -260,6 +260,125 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
         assert missing_response.status_code == 404
 
     app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_admin_sends_invitations_separately(monkeypatch: pytest.MonkeyPatch) -> None:
+    admin_user = make_admin_user()
+    db = DummyDB()
+    sent_emails: list[dict] = []
+
+    async def override_current_user():
+        return admin_user
+
+    async def override_db():
+        yield db
+
+    async def fake_get_user_by_email(_db_obj, _email):
+        return None
+
+    async def fake_create_invitation(_db_obj, **kwargs):
+        return SimpleNamespace(id=uuid.uuid4(), **kwargs)
+
+    async def fake_mark_sent(_db_obj, invitation, sent_at):
+        invitation.sent_at = sent_at
+        return invitation
+
+    async def fake_send_invitation_email(**kwargs):
+        sent_emails.append(kwargs)
+
+    app.dependency_overrides[deps.get_current_user] = override_current_user
+    app.dependency_overrides[deps.get_db] = override_db
+    monkeypatch.setattr("app.api.routes.admin.crud.get_user_by_email", fake_get_user_by_email)
+    monkeypatch.setattr("app.api.routes.admin.crud.create_user_invitation", fake_create_invitation)
+    monkeypatch.setattr("app.api.routes.admin.crud.mark_invitation_sent", fake_mark_sent)
+    monkeypatch.setattr("app.api.routes.admin.send_invitation_email", fake_send_invitation_email)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/v1/admin/invitations",
+            json={
+                "recipient_emails": ["first@example.com", "second@example.com"],
+                "subject": "Join",
+                "template": "Hello {email}, use {invite_link}",
+            },
+        )
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["failed"] == []
+    assert [email["to_email"] for email in sent_emails] == [
+        "first@example.com",
+        "second@example.com",
+    ]
+    assert all("second@example.com" not in email["body"] for email in sent_emails[:1])
+
+
+@pytest.mark.asyncio
+async def test_accept_invitation_creates_researcher_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = DummyDB()
+    invitation = SimpleNamespace(
+        email="new@example.com",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        accepted_at=None,
+    )
+    created_user = User(
+        id=uuid.uuid4(),
+        email=invitation.email,
+        hashed_password="hashed",
+        full_name="New Researcher",
+        role="researcher",
+        is_active=True,
+    )
+
+    async def override_db():
+        yield db
+
+    async def fake_get_invitation_by_token_hash(_db_obj, _token_hash):
+        return invitation
+
+    async def fake_get_user_by_email(_db_obj, _email):
+        return None
+
+    async def fake_create_user(_db_obj, data):
+        assert data.email == invitation.email
+        assert data.role == "researcher"
+        return created_user
+
+    async def fake_mark_accepted(_db_obj, invitation_obj, accepted_at):
+        invitation_obj.accepted_at = accepted_at
+        return invitation_obj
+
+    app.dependency_overrides[deps.get_db] = override_db
+    monkeypatch.setattr(
+        "app.api.routes.auth.crud.get_invitation_by_token_hash",
+        fake_get_invitation_by_token_hash,
+    )
+    monkeypatch.setattr("app.api.routes.auth.crud.get_user_by_email", fake_get_user_by_email)
+    monkeypatch.setattr("app.api.routes.auth.crud.create_user", fake_create_user)
+    monkeypatch.setattr("app.api.routes.auth.crud.mark_invitation_accepted", fake_mark_accepted)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        preview_response = await client.get("/api/v1/auth/invitations/raw-token")
+        accept_response = await client.post(
+            "/api/v1/auth/invitations/raw-token/accept",
+            json={
+                "full_name": "New Researcher",
+                "password": "password123",
+                "password_confirm": "password123",
+            },
+        )
+
+    app.dependency_overrides.clear()
+
+    assert preview_response.status_code == 200
+    assert preview_response.json()["email"] == "new@example.com"
+    assert accept_response.status_code == 201
+    assert accept_response.json()["role"] == "researcher"
+    assert invitation.accepted_at is not None
 
 
 @pytest.mark.asyncio

@@ -67,10 +67,18 @@ pubmed_retry = retry(
 try:
     import httpx
 
+    def _is_http_retryable(exc: BaseException) -> bool:
+        if isinstance(exc, (httpx.RequestError, httpx.TimeoutException)):
+            return True
+        if isinstance(exc, httpx.HTTPStatusError):
+            status_code = exc.response.status_code
+            return status_code == 429 or status_code >= 500
+        return False
+
     http_retry = retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.RequestError, httpx.TimeoutException)),
+        retry=retry_if_exception(_is_http_retryable),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )

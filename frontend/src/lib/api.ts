@@ -1,4 +1,4 @@
-import type { Source, User } from "@/types";
+import type { InvitationPreview, InvitationSendResponse, Source, User } from "@/types";
 
 /**
  * Typed API client for the frontend proxy layer.
@@ -66,6 +66,55 @@ export async function updateAdminUserStatus(userId: string, isActive: boolean) {
     method: "PATCH",
     body: JSON.stringify({ is_active: isActive }),
   });
+}
+
+export async function sendInvitations(
+  recipientEmails: string[],
+  subject: string,
+  template: string
+) {
+  return apiFetch<InvitationSendResponse>("/admin/invitations", {
+    method: "POST",
+    body: JSON.stringify({
+      recipient_emails: recipientEmails,
+      subject,
+      template,
+    }),
+  });
+}
+
+export async function getInvitation(token: string) {
+  const res = await fetch(`/api/auth/invitations/${token}`, { cache: "no-store" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.detail ?? `API error ${res.status}`);
+  }
+  return res.json() as Promise<InvitationPreview>;
+}
+
+export async function acceptInvitation(
+  token: string,
+  fullName: string,
+  password: string,
+  passwordConfirm: string
+) {
+  const res = await fetch(`/api/auth/invitations/${token}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      full_name: fullName,
+      password,
+      password_confirm: passwordConfirm,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const detail = Array.isArray(body?.detail)
+      ? body.detail.map((item: { msg?: string }) => item.msg).join("; ")
+      : body?.detail;
+    throw new Error(detail ?? `API error ${res.status}`);
+  }
+  return res.json() as Promise<User>;
 }
 
 // ── Chat Sessions ─────────────────────────────────────────────────────────────

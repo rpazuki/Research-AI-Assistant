@@ -6,6 +6,8 @@ All auth helpers used by the auth routes and dependencies live here.
 """
 
 from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
 from typing import Any
 
 from jose import JWTError, jwt
@@ -24,6 +26,14 @@ def hash_password(plain: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
+
+
+def create_invitation_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_invitation_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def create_access_token(subject: str, extra_claims: dict[str, Any] | None = None) -> str:

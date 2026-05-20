@@ -8,12 +8,13 @@ All functions accept an AsyncSession argument — never create sessions here.
 """
 
 import uuid
+from datetime import datetime
 from typing import Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ChatMessage, ChatSession, Document, Feedback, User
+from app.db.models import ChatMessage, ChatSession, Document, Feedback, User, UserInvitation
 from app.schemas.auth import UserCreate
 from app.core.security import hash_password
 
@@ -51,6 +52,56 @@ async def update_user_active(db: AsyncSession, user: User, is_active: bool) -> U
     user.is_active = is_active
     await db.flush()
     return user
+
+
+# ── Invitations ───────────────────────────────────────────────────────────────
+
+async def create_user_invitation(
+    db: AsyncSession,
+    *,
+    email: str,
+    token_hash: str,
+    subject: str,
+    template: str,
+    invited_by_user_id: uuid.UUID,
+    expires_at: datetime,
+) -> UserInvitation:
+    invitation = UserInvitation(
+        email=email,
+        token_hash=token_hash,
+        subject=subject,
+        template=template,
+        invited_by_user_id=invited_by_user_id,
+        expires_at=expires_at,
+    )
+    db.add(invitation)
+    await db.flush()
+    return invitation
+
+
+async def get_invitation_by_token_hash(
+    db: AsyncSession, token_hash: str
+) -> UserInvitation | None:
+    result = await db.execute(
+        select(UserInvitation).where(UserInvitation.token_hash == token_hash)
+    )
+    return result.scalar_one_or_none()
+
+
+async def mark_invitation_sent(
+    db: AsyncSession, invitation: UserInvitation, sent_at: datetime
+) -> UserInvitation:
+    invitation.sent_at = sent_at
+    await db.flush()
+    return invitation
+
+
+async def mark_invitation_accepted(
+    db: AsyncSession, invitation: UserInvitation, accepted_at: datetime
+) -> UserInvitation:
+    invitation.accepted_at = accepted_at
+    await db.flush()
+    return invitation
 
 
 # ── Chat Sessions ─────────────────────────────────────────────────────────────
