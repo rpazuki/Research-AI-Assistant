@@ -14,6 +14,9 @@ from app.main import app
 
 
 class DummyDB:
+    async def execute(self, *_args, **_kwargs):
+        return []
+
     async def delete(self, _obj) -> None:
         return None
 
@@ -26,6 +29,7 @@ def make_user() -> User:
         full_name="Researcher",
         role="researcher",
         is_active=True,
+        token_limit=1_000_000,
     )
 
 
@@ -37,6 +41,7 @@ def make_admin_user() -> User:
         full_name="Admin",
         role="admin",
         is_active=True,
+        token_limit=1_000_000,
     )
 
 
@@ -244,12 +249,20 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
         user.is_active = is_active
         return user
 
+    async def fake_update_user_token_limit(_db_obj, user, token_limit: int):
+        user.token_limit = token_limit
+        return user
+
     app.dependency_overrides[deps.get_current_user] = override_current_user
     app.dependency_overrides[deps.get_db] = override_db
     monkeypatch.setattr("app.api.routes.admin.crud.list_users", fake_list_users)
     monkeypatch.setattr("app.api.routes.admin.crud.get_usage_by_user", fake_get_usage_by_user)
     monkeypatch.setattr("app.api.routes.admin.crud.get_user_by_id", fake_get_user_by_id)
     monkeypatch.setattr("app.api.routes.admin.crud.update_user_active", fake_update_user_active)
+    monkeypatch.setattr(
+        "app.api.routes.admin.crud.update_user_token_limit",
+        fake_update_user_token_limit,
+    )
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -260,6 +273,7 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
             "researcher@example.com",
         ]
         users_body = users_response.json()
+        assert users_body[0]["token_limit"] == 1_000_000
         assert users_body[0]["usage"]["session_count"] == 0
         assert users_body[1]["usage"]["session_count"] == 2
         assert users_body[1]["usage"]["user_message_count"] == 5
@@ -278,6 +292,13 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
         assert update_response.status_code == 200
         assert update_response.json()["is_active"] is False
         assert update_response.json()["usage"]["session_count"] == 2
+
+        limit_response = await client.patch(
+            f"/api/v1/admin/users/{researcher.id}",
+            json={"token_limit": 5_000_000},
+        )
+        assert limit_response.status_code == 200
+        assert limit_response.json()["token_limit"] == 5_000_000
 
         missing_response = await client.get(f"/api/v1/admin/users/{uuid.uuid4()}")
         assert missing_response.status_code == 404
@@ -470,6 +491,61 @@ async def test_chat_streaming_endpoint_emits_sse_and_persists_messages(api_clien
     assert created_messages[1]["completion_tokens"] == 23
     assert '"prompt_tokens": 101' in text
     assert '"completion_tokens": 23' in text
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoints_reject_new_work_when_token_limit_is_reached(
+    api_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, user, _db = api_client
+    session = SimpleNamespace(id=uuid.uuid4(), user_id=user.id, mode="researcher")
+
+    async def fake_get_usage_by_user(_db_obj, user_ids):
+        assert user.id in user_ids
+        return {user.id: {"total_token_count": user.token_limit}}
+
+    async def fake_get_session(_db_obj, session_id):
+        assert session_id == session.id
+        return session
+
+    monkeypatch.setattr("app.db.crud.get_usage_by_user", fake_get_usage_by_user)
+    monkeypatch.setattr("app.db.crud.get_session", fake_get_session)
+
+    create_response = await client.post(
+        "/api/v1/chat/sessions",
+        json={"mode": "researcher"},
+    )
+    message_response = await client.post(
+        f"/api/v1/chat/sessions/{session.id}/messages",
+        json={"query": "Can I ask another?", "mode": "researcher"},
+    )
+
+    assert create_response.status_code == 403
+    assert "token limit has been reached" in create_response.json()["detail"]
+    assert message_response.status_code == 403
+    assert "token limit has been reached" in message_response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_chat_quota_endpoint_reports_user_token_status(
+    api_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, user, _db = api_client
+
+    async def fake_get_usage_by_user(_db_obj, user_ids):
+        assert user.id in user_ids
+        return {user.id: {"total_token_count": user.token_limit}}
+
+    monkeypatch.setattr("app.db.crud.get_usage_by_user", fake_get_usage_by_user)
+
+    response = await client.get("/api/v1/chat/quota")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["token_limit"] == user.token_limit
+    assert body["total_token_count"] == user.token_limit
+    assert body["token_limit_reached"] is True
+    assert "token limit has been reached" in body["message"]
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 import type {
   AdminUserSummary,
+  ChatQuota,
   InvitationPreview,
   InvitationSendResponse,
   Source,
@@ -74,6 +75,13 @@ export async function updateAdminUserStatus(userId: string, isActive: boolean) {
   });
 }
 
+export async function updateAdminUserTokenLimit(userId: string, tokenLimit: number) {
+  return apiFetch<AdminUserSummary>(`/admin/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ token_limit: tokenLimit }),
+  });
+}
+
 export async function sendInvitations(
   recipientEmails: string[],
   subject: string,
@@ -136,6 +144,10 @@ export async function listSessions() {
   return apiFetch<Array<{ id: string; title: string | null; mode: string; updated_at: string }>>(
     "/chat/sessions"
   );
+}
+
+export async function getChatQuota() {
+  return apiFetch<ChatQuota>("/chat/quota");
 }
 
 export async function getSession(sessionId: string) {

@@ -7,6 +7,7 @@ import AdminUserClient from "./AdminUserClient";
 const push = vi.fn();
 const getAdminUser = vi.fn();
 const updateAdminUserStatus = vi.fn();
+const updateAdminUserTokenLimit = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
@@ -15,6 +16,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/api", () => ({
   getAdminUser: (...args: unknown[]) => getAdminUser(...args),
   updateAdminUserStatus: (...args: unknown[]) => updateAdminUserStatus(...args),
+  updateAdminUserTokenLimit: (...args: unknown[]) => updateAdminUserTokenLimit(...args),
 }));
 
 describe("AdminUserClient", () => {
@@ -22,6 +24,7 @@ describe("AdminUserClient", () => {
     push.mockReset();
     getAdminUser.mockReset();
     updateAdminUserStatus.mockReset();
+    updateAdminUserTokenLimit.mockReset();
   });
 
   it("shows user details and updates active status from the checkbox", async () => {
@@ -31,6 +34,8 @@ describe("AdminUserClient", () => {
       full_name: "Researcher",
       role: "researcher",
       is_active: true,
+      token_limit: 1_000_000,
+      token_limit_reached: false,
       usage: {
         session_count: 3,
         user_message_count: 9,
@@ -48,6 +53,8 @@ describe("AdminUserClient", () => {
       full_name: "Researcher",
       role: "researcher",
       is_active: false,
+      token_limit: 1_000_000,
+      token_limit_reached: false,
       usage: {
         session_count: 3,
         user_message_count: 9,
@@ -73,6 +80,7 @@ describe("AdminUserClient", () => {
     expect(screen.getByText("2,000")).toBeInTheDocument();
     expect(screen.getByText("700")).toBeInTheDocument();
     expect(screen.getByText("612 ms")).toBeInTheDocument();
+    expect(screen.getByText("2,700 of 1,000,000 tokens used")).toBeInTheDocument();
 
     const checkbox = screen.getByRole("checkbox", { name: /active account/i });
     expect(checkbox).toBeChecked();
@@ -83,6 +91,117 @@ describe("AdminUserClient", () => {
     });
     await waitFor(() => {
       expect(screen.getByRole("checkbox", { name: /active account/i })).not.toBeChecked();
+    });
+  });
+
+  it("manually edits and saves the token limit from the user page", async () => {
+    getAdminUser.mockResolvedValue({
+      id: "user-1",
+      email: "researcher@example.com",
+      full_name: "Researcher",
+      role: "researcher",
+      is_active: true,
+      token_limit: 1_000_000,
+      token_limit_reached: false,
+      usage: {
+        session_count: 3,
+        user_message_count: 9,
+        assistant_message_count: 8,
+        prompt_token_count: 2000,
+        completion_token_count: 700,
+        total_token_count: 2700,
+        last_active_at: null,
+        avg_latency_ms: 612.2,
+      },
+    });
+    updateAdminUserTokenLimit.mockResolvedValue({
+      id: "user-1",
+      email: "researcher@example.com",
+      full_name: "Researcher",
+      role: "researcher",
+      is_active: true,
+      token_limit: 5_000_000,
+      token_limit_reached: false,
+      usage: {
+        session_count: 3,
+        user_message_count: 9,
+        assistant_message_count: 8,
+        prompt_token_count: 2000,
+        completion_token_count: 700,
+        total_token_count: 2700,
+        last_active_at: null,
+        avg_latency_ms: 612.2,
+      },
+    });
+
+    render(<AdminUserClient userId="user-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "1,000,000 tokens" }));
+    const input = await screen.findByLabelText("Editable token limit");
+    fireEvent.change(input, { target: { value: "5000000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(updateAdminUserTokenLimit).toHaveBeenCalledWith("user-1", 5_000_000);
+    });
+    await waitFor(() => {
+      expect(screen.getByText("2,700 of 5,000,000 tokens used")).toBeInTheDocument();
+    });
+  });
+
+  it("adds the selected quick amount to the current token limit", async () => {
+    getAdminUser.mockResolvedValue({
+      id: "user-1",
+      email: "researcher@example.com",
+      full_name: "Researcher",
+      role: "researcher",
+      is_active: true,
+      token_limit: 1_000_000,
+      token_limit_reached: false,
+      usage: {
+        session_count: 3,
+        user_message_count: 9,
+        assistant_message_count: 8,
+        prompt_token_count: 2000,
+        completion_token_count: 700,
+        total_token_count: 2700,
+        last_active_at: null,
+        avg_latency_ms: 612.2,
+      },
+    });
+    updateAdminUserTokenLimit.mockResolvedValue({
+      id: "user-1",
+      email: "researcher@example.com",
+      full_name: "Researcher",
+      role: "researcher",
+      is_active: true,
+      token_limit: 6_000_000,
+      token_limit_reached: false,
+      usage: {
+        session_count: 3,
+        user_message_count: 9,
+        assistant_message_count: 8,
+        prompt_token_count: 2000,
+        completion_token_count: 700,
+        total_token_count: 2700,
+        last_active_at: null,
+        avg_latency_ms: 612.2,
+      },
+    });
+
+    render(<AdminUserClient userId="user-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "1,000,000 tokens" }));
+    fireEvent.change(await screen.findByLabelText("Token limit amount to add"), {
+      target: { value: "5000000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() => {
+      expect(updateAdminUserTokenLimit).toHaveBeenCalledWith("user-1", 6_000_000);
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "6,000,000 tokens" })).toBeInTheDocument();
     });
   });
 

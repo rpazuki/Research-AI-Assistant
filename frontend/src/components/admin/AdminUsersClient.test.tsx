@@ -34,6 +34,8 @@ describe("AdminUsersClient", () => {
         full_name: "Researcher",
         role: "researcher",
         is_active: true,
+        token_limit: 1_000_000,
+        token_limit_reached: false,
         usage: {
           session_count: 2,
           user_message_count: 7,
@@ -47,10 +49,50 @@ describe("AdminUsersClient", () => {
       },
       {
         id: "user-2",
-        email: "inactive@example.com",
+        email: "near-limit@example.com",
+        full_name: "Near Limit",
+        role: "researcher",
+        is_active: true,
+        token_limit: 1_000_000,
+        token_limit_reached: false,
+        usage: {
+          session_count: 1,
+          user_message_count: 2,
+          assistant_message_count: 2,
+          prompt_token_count: 600_000,
+          completion_token_count: 300_000,
+          total_token_count: 900_000,
+          last_active_at: null,
+          avg_latency_ms: null,
+        },
+      },
+      {
+        id: "user-3",
+        email: "limited@example.com",
+        full_name: "Limited User",
+        role: "researcher",
+        is_active: true,
+        token_limit: 1_000_000,
+        token_limit_reached: true,
+        usage: {
+          session_count: 1,
+          user_message_count: 2,
+          assistant_message_count: 2,
+          prompt_token_count: 700_000,
+          completion_token_count: 300_000,
+          total_token_count: 1_000_000,
+          last_active_at: null,
+          avg_latency_ms: null,
+        },
+      },
+      {
+        id: "user-4",
+        email: "inactive-limited@example.com",
         full_name: null,
         role: "researcher",
         is_active: false,
+        token_limit: 1_000_000,
+        token_limit_reached: true,
         usage: {
           session_count: 0,
           user_message_count: 0,
@@ -69,11 +111,20 @@ describe("AdminUsersClient", () => {
     await waitFor(() => {
       expect(screen.getByText("researcher@example.com")).toBeInTheDocument();
     });
-    expect(screen.getByText("Inactive")).toBeInTheDocument();
+    expect(screen.getByText("near-limit@example.com")).toBeInTheDocument();
+    expect(screen.getByText("limited@example.com")).toBeInTheDocument();
+    expect(screen.getByText("inactive-limited@example.com")).toBeInTheDocument();
     expect(screen.getByText("7")).toBeInTheDocument();
     expect(screen.getByText("1,545")).toBeInTheDocument();
     expect(screen.getByText("431 ms")).toBeInTheDocument();
-    expect(screen.getAllByText("Never")).toHaveLength(2);
+    expect(screen.getAllByText("Never")).toHaveLength(4);
+    expect(screen.getAllByText("Active")[0]).toHaveClass("bg-green-50", "text-green-700");
+    expect(screen.getAllByText("Active")[1]).toHaveClass("bg-yellow-50", "text-yellow-700");
+    expect(screen.getByText("Token limit")).toHaveClass("bg-red-50", "text-red-700");
+    expect(screen.getByText("Inactive")).toHaveClass("bg-gray-100", "text-gray-600");
+    expect(screen.getByText("inactive-limited@example.com").closest("tr")).not.toHaveTextContent(
+      "Token limit"
+    );
     expect(screen.getByRole("link", { name: "Invite users" })).toHaveAttribute(
       "href",
       "/admin/invitations"

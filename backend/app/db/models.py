@@ -15,7 +15,7 @@ Implementer note:
 """
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean, Column, Date, DateTime, ForeignKey, Integer, SmallInteger,
@@ -24,6 +24,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 from pgvector.sqlalchemy import Vector
+
+
+DEFAULT_USER_TOKEN_LIMIT = 1_000_000
 
 
 def utcnow() -> datetime:
@@ -45,6 +48,7 @@ class User(Base):
     full_name = Column(String)
     role = Column(String, nullable=False, default="researcher")  # 'researcher' | 'admin'
     is_active = Column(Boolean, nullable=False, default=True)
+    token_limit = Column(Integer, nullable=False, default=DEFAULT_USER_TOKEN_LIMIT)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 

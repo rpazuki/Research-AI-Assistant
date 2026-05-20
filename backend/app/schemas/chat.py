@@ -68,6 +68,13 @@ class ChatSessionWithMessages(ChatSessionResponse):
     messages: list[ChatMessageResponse] = Field(default_factory=list)
 
 
+class ChatQuotaResponse(BaseModel):
+    token_limit: int
+    total_token_count: int
+    token_limit_reached: bool
+    message: str | None = None
+
+
 # SSE event payloads
 
 class SSETokenEvent(BaseModel):

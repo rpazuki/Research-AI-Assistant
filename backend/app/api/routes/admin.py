@@ -13,7 +13,7 @@ from app.api.deps import AdminUser, DBSession
 from app.core.config import settings
 from app.core.security import create_invitation_token, hash_invitation_token
 from app.db import crud
-from app.db.models import User
+from app.db.models import DEFAULT_USER_TOKEN_LIMIT, User
 from app.email.sendgrid import send_invitation_email
 from app.schemas.admin import (
     AdminUserSummary,
@@ -21,7 +21,7 @@ from app.schemas.admin import (
     InvitationSendRequest,
     InvitationSendResponse,
     UserUsageSummary,
-    UserStatusUpdate,
+    UserAdminUpdate,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -51,14 +51,20 @@ async def get_admin_user(
 @router.patch("/users/{user_id}", response_model=AdminUserSummary)
 async def update_admin_user_status(
     user_id: uuid.UUID,
-    body: UserStatusUpdate,
+    body: UserAdminUpdate,
     _admin: AdminUser,
     db: DBSession,
 ) -> AdminUserSummary:
     user = await crud.get_user_by_id(db, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    updated_user = await crud.update_user_active(db, user=user, is_active=body.is_active)
+    updated_user = user
+    if body.is_active is not None:
+        updated_user = await crud.update_user_active(db, user=updated_user, is_active=body.is_active)
+    if body.token_limit is not None:
+        updated_user = await crud.update_user_token_limit(
+            db, user=updated_user, token_limit=body.token_limit
+        )
     usage_by_user = await crud.get_usage_by_user(db, [updated_user.id])
     return _build_admin_user_summary(
         user=updated_user, usage=usage_by_user.get(updated_user.id, {})
@@ -135,11 +141,15 @@ def _render_invitation_template(template: str, *, email: str, invite_link: str) 
 
 
 def _build_admin_user_summary(user: User, usage: dict | None = None) -> AdminUserSummary:
+    usage_summary = UserUsageSummary(**(usage or {}))
+    token_limit = int(getattr(user, "token_limit", None) or DEFAULT_USER_TOKEN_LIMIT)
     return AdminUserSummary(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         role=user.role,
         is_active=user.is_active,
-        usage=UserUsageSummary(**(usage or {})),
+        token_limit=token_limit,
+        token_limit_reached=usage_summary.total_token_count >= token_limit,
+        usage=usage_summary,
     )

@@ -6,8 +6,9 @@ from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
 
 
-class UserStatusUpdate(BaseModel):
-    is_active: bool
+class UserAdminUpdate(BaseModel):
+    is_active: bool | None = None
+    token_limit: int | None = Field(default=None, ge=0)
 
 
 class InvitationSendRequest(BaseModel):
@@ -45,4 +46,6 @@ class AdminUserSummary(BaseModel):
     full_name: str | None
     role: str
     is_active: bool
+    token_limit: int
+    token_limit_reached: bool = False
     usage: UserUsageSummary = Field(default_factory=UserUsageSummary)

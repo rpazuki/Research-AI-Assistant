@@ -7,6 +7,7 @@ import ChatClient from "./ChatClient";
 const push = vi.fn();
 
 const createSession = vi.fn();
+const getChatQuota = vi.fn();
 const getSession = vi.fn();
 const listSessions = vi.fn();
 const deleteSession = vi.fn();
@@ -20,6 +21,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/api", () => ({
   createSession: (...args: unknown[]) => createSession(...args),
+  getChatQuota: (...args: unknown[]) => getChatQuota(...args),
   getSession: (...args: unknown[]) => getSession(...args),
   listSessions: (...args: unknown[]) => listSessions(...args),
   deleteSession: (...args: unknown[]) => deleteSession(...args),
@@ -32,6 +34,7 @@ describe("ChatClient", () => {
   beforeEach(() => {
     push.mockReset();
     createSession.mockReset();
+    getChatQuota.mockReset();
     getSession.mockReset();
     listSessions.mockReset();
     deleteSession.mockReset();
@@ -42,6 +45,12 @@ describe("ChatClient", () => {
     listSessions.mockResolvedValue([
       { id: "session-1", title: "Initial title", mode: "researcher", updated_at: "2026-05-16T00:00:00Z" },
     ]);
+    getChatQuota.mockResolvedValue({
+      token_limit: 1_000_000,
+      total_token_count: 500,
+      token_limit_reached: false,
+      message: null,
+    });
     getSession.mockResolvedValue({
       id: "session-1",
       mode: "researcher",
@@ -120,5 +129,39 @@ describe("ChatClient", () => {
     expect(push).toHaveBeenCalledWith("/chat");
 
     confirmSpy.mockRestore();
+  });
+
+  it("shows the token limit message when a new chat is blocked", async () => {
+    createSession.mockRejectedValue(
+      new Error("Your token limit has been reached. Please ask your lab admin for more tokens.")
+    );
+
+    render(<ChatClient />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /\+ new chat/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/token limit has been reached/i)).toBeInTheDocument();
+    });
+  });
+
+  it("shows token limit status on load while keeping existing chats browsable", async () => {
+    getChatQuota.mockResolvedValue({
+      token_limit: 1_000_000,
+      total_token_count: 1_000_000,
+      token_limit_reached: true,
+      message: "Your token limit has been reached. Please ask your lab admin for more tokens.",
+    });
+
+    render(<ChatClient />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/token limit has been reached/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /\+ new chat/i })).toBeDisabled();
+    expect(screen.getByPlaceholderText("Token limit reached")).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Initial title" }));
+    expect(push).toHaveBeenCalledWith("/chat/session-1");
   });
 });

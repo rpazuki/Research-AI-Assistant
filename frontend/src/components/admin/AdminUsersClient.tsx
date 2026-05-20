@@ -8,6 +8,24 @@ import { listAdminUsers, logout } from "@/lib/api";
 import type { AdminUserSummary } from "@/types";
 import { formatCount, formatLastActive, formatLatency } from "./usage";
 
+function getUserStatus(user: AdminUserSummary) {
+  if (!user.is_active) {
+    return { label: "Inactive", className: "bg-gray-100 text-gray-600" };
+  }
+
+  if (user.token_limit_reached) {
+    return { label: "Token limit", className: "bg-red-50 text-red-700" };
+  }
+
+  const tokenUsageRatio =
+    user.token_limit > 0 ? user.usage.total_token_count / user.token_limit : 1;
+  if (tokenUsageRatio >= 0.9) {
+    return { label: "Active", className: "bg-yellow-50 text-yellow-700" };
+  }
+
+  return { label: "Active", className: "bg-green-50 text-green-700" };
+}
+
 export default function AdminUsersClient() {
   const router = useRouter();
   const [users, setUsers] = useState<AdminUserSummary[]>([]);
@@ -106,49 +124,48 @@ export default function AdminUsersClient() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {users.map((user) => (
-                    <tr key={user.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-900">
-                        {user.full_name ?? "Unnamed user"}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">{user.email}</td>
-                      <td className="px-4 py-3 text-gray-600">{user.role}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${
-                            user.is_active
-                              ? "bg-green-50 text-green-700"
-                              : "bg-gray-100 text-gray-600"
-                          }`}
-                        >
-                          {user.is_active ? "Active" : "Inactive"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-gray-600">
-                        {user.usage.session_count}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-gray-600">
-                        {user.usage.user_message_count}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-gray-600">
-                        {formatCount(user.usage.total_token_count)}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">
-                        {formatLastActive(user.usage.last_active_at)}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-gray-600">
-                        {formatLatency(user.usage.avg_latency_ms)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <Link
-                          href={`/admin/users/${user.id}`}
-                          className="text-sm font-medium text-blue-600 hover:underline"
-                        >
-                          View user
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
+                  {users.map((user) => {
+                    const status = getUserStatus(user);
+                    return (
+                      <tr key={user.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-medium text-gray-900">
+                          {user.full_name ?? "Unnamed user"}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">{user.email}</td>
+                        <td className="px-4 py-3 text-gray-600">{user.role}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${status.className}`}
+                          >
+                            {status.label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-600">
+                          {user.usage.session_count}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-600">
+                          {user.usage.user_message_count}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-600">
+                          {formatCount(user.usage.total_token_count)}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">
+                          {formatLastActive(user.usage.last_active_at)}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-600">
+                          {formatLatency(user.usage.avg_latency_ms)}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <Link
+                            href={`/admin/users/${user.id}`}
+                            className="text-sm font-medium text-blue-600 hover:underline"
+                          >
+                            View user
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {users.length === 0 && (
                     <tr>
                       <td className="px-4 py-8 text-sm text-gray-500" colSpan={10}>

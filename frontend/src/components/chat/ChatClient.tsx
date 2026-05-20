@@ -10,13 +10,14 @@ import remarkGfm from "remark-gfm";
 import {
   createSession,
   deleteSession,
+  getChatQuota,
   getSession,
   listSessions,
   logout,
   streamMessage,
   updateSessionTitle,
 } from "@/lib/api";
-import type { ChatMessage, Source } from "@/types";
+import type { ChatMessage, ChatQuota, Source } from "@/types";
 
 interface Message {
   id: string;
@@ -71,6 +72,7 @@ export default function ChatClient({
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"researcher" | "lab_manager">("researcher");
   const [activeSources, setActiveSources] = useState<Source[]>([]);
+  const [quota, setQuota] = useState<ChatQuota | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -92,6 +94,7 @@ export default function ChatClient({
 
   useEffect(() => {
     void loadSessions();
+    void loadQuota();
   }, []);
 
   useEffect(() => {
@@ -186,6 +189,30 @@ export default function ChatClient({
     }
   }
 
+  async function loadQuota() {
+    try {
+      const data = await getChatQuota();
+      setQuota(data);
+    } catch (err) {
+      if (err instanceof Error && err.message === "Unauthorized") {
+        router.push("/login");
+      }
+    }
+  }
+
+  function applyTokenLimitError(err: unknown) {
+    const message = err instanceof Error ? err.message : "";
+    if (message.toLowerCase().includes("token limit")) {
+      setQuota((previous) => ({
+        token_limit: previous?.token_limit ?? 0,
+        total_token_count: previous?.total_token_count ?? 0,
+        token_limit_reached: true,
+        message,
+      }));
+      void loadQuota();
+    }
+  }
+
   function getDisplaySessionTitle(session: SessionSummary) {
     const cleaned = session.title?.trim();
     return cleaned ? cleaned : "Untitled Chat";
@@ -217,6 +244,10 @@ export default function ChatClient({
   }
 
   async function handleNewChat() {
+    if (quota?.token_limit_reached) {
+      return;
+    }
+
     try {
       const session = await createSession(mode);
       setActiveSessionId(session.id);
@@ -226,6 +257,7 @@ export default function ChatClient({
       await loadSessions();
       router.push(`/chat/${session.id}`);
     } catch (err) {
+      applyTokenLimitError(err);
       setError(err instanceof Error ? err.message : "Failed to create session");
     }
   }
@@ -324,7 +356,7 @@ export default function ChatClient({
   }
 
   async function handleSend() {
-    if (!input.trim() || isStreaming) {
+    if (!input.trim() || isStreaming || quota?.token_limit_reached) {
       return;
     }
 
@@ -336,6 +368,7 @@ export default function ChatClient({
         setActiveSessionId(sessionId);
         router.push(`/chat/${sessionId}`);
       } catch (err) {
+        applyTokenLimitError(err);
         setError(err instanceof Error ? err.message : "Failed to create session");
         return;
       }
@@ -406,12 +439,14 @@ export default function ChatClient({
               return updated;
             });
             await loadSessions();
+            await loadQuota();
           } else if (event.type === "error") {
             throw new Error(String(event.message ?? "Streaming failed"));
           }
         }
       }
     } catch (err) {
+      applyTokenLimitError(err);
       setError(err instanceof Error ? err.message : "Streaming failed");
       setMessages((prev) => {
         const updated = [...prev];
@@ -459,9 +494,16 @@ export default function ChatClient({
             </div>
           </div>
           <div className="p-3">
+            {quota?.token_limit_reached && (
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-700">
+                {quota.message ??
+                  "Your token limit has been reached. Please ask your lab admin for more tokens."}
+              </div>
+            )}
             <button
               onClick={handleNewChat}
-              className="w-full rounded-lg bg-blue-600 text-white text-sm py-2 font-medium hover:bg-blue-700 transition"
+              disabled={quota?.token_limit_reached}
+              className="w-full rounded-lg bg-blue-600 text-white text-sm py-2 font-medium hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 transition"
             >
               + New Chat
             </button>
@@ -637,13 +679,17 @@ export default function ChatClient({
                   void handleSend();
                 }
               }}
-              disabled={isStreaming}
-              placeholder="e.g. What are the key metabolic pathways for lipid accumulation in Y. lipolytica?"
+              disabled={isStreaming || quota?.token_limit_reached}
+              placeholder={
+                quota?.token_limit_reached
+                  ? "Token limit reached"
+                  : "e.g. What are the key metabolic pathways for lipid accumulation in Y. lipolytica?"
+              }
               className="flex-1 rounded-xl border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
             />
             <button
               onClick={() => void handleSend()}
-              disabled={isStreaming || !input.trim()}
+              disabled={isStreaming || !input.trim() || quota?.token_limit_reached}
               className="rounded-xl bg-blue-600 text-white px-5 py-2 text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 transition"
             >
               {isStreaming ? "..." : "Send"}

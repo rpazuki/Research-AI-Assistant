@@ -20,6 +20,8 @@ export interface UserUsageSummary {
 }
 
 export interface AdminUserSummary extends User {
+  token_limit: number;
+  token_limit_reached: boolean;
   usage: UserUsageSummary;
 }
 
@@ -74,6 +76,13 @@ export interface ChatSession {
 
 export interface ChatSessionWithMessages extends ChatSession {
   messages: ChatMessage[];
+}
+
+export interface ChatQuota {
+  token_limit: number;
+  total_token_count: number;
+  token_limit_reached: boolean;
+  message: string | null;
 }
 
 export interface SearchResultItem {

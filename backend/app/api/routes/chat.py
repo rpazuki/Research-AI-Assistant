@@ -24,11 +24,12 @@ from fastapi.responses import StreamingResponse
 from app.api.deps import CurrentUser, DBSession, EmbeddingDep, LLMDep
 from app.core.logging import log
 from app.db import crud
-from app.db.models import ChatSession
+from app.db.models import DEFAULT_USER_TOKEN_LIMIT, ChatSession, User
 from app.rag.pipeline import _format_exception_message, run_rag_stream
 from app.schemas.chat import (
     ChatMessageRequest,
     ChatSessionCreate,
+    ChatQuotaResponse,
     ChatSessionResponse,
     ChatSessionUpdate,
     ChatSessionWithMessages,
@@ -36,13 +37,23 @@ from app.schemas.chat import (
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+TOKEN_LIMIT_REACHED_MESSAGE = (
+    "Your token limit has been reached. Please ask your lab admin for more tokens."
+)
+
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
+
+@router.get("/quota", response_model=ChatQuotaResponse)
+async def get_chat_quota(current_user: CurrentUser, db: DBSession) -> ChatQuotaResponse:
+    return await _get_chat_quota(current_user, db)
+
 
 @router.post("/sessions", response_model=ChatSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     body: ChatSessionCreate, current_user: CurrentUser, db: DBSession
 ) -> ChatSessionResponse:
+    await _ensure_user_under_token_limit(current_user, db)
     session = await crud.create_chat_session(
         db, user_id=current_user.id, mode=body.mode, title=body.title
     )
@@ -112,6 +123,7 @@ async def post_message(
     The assistant message is saved after streaming completes.
     """
     session = await _get_owned_session(session_id, current_user.id, db)
+    await _ensure_user_under_token_limit(current_user, db)
     existing_message_count = await crud.get_message_count_for_session(db, session.id)
     should_auto_title = existing_message_count == 0 and not (session.title or "").strip()
 
@@ -229,6 +241,28 @@ async def _get_owned_session(
     if session.user_id != user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return session
+
+
+async def _ensure_user_under_token_limit(user: User, db: DBSession) -> None:
+    quota = await _get_chat_quota(user, db)
+    if quota.token_limit_reached:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=TOKEN_LIMIT_REACHED_MESSAGE,
+        )
+
+
+async def _get_chat_quota(user: User, db: DBSession) -> ChatQuotaResponse:
+    token_limit = int(getattr(user, "token_limit", None) or DEFAULT_USER_TOKEN_LIMIT)
+    usage_by_user = await crud.get_usage_by_user(db, [user.id])
+    total_tokens = int(usage_by_user.get(user.id, {}).get("total_token_count", 0))
+    token_limit_reached = total_tokens >= token_limit
+    return ChatQuotaResponse(
+        token_limit=token_limit,
+        total_token_count=total_tokens,
+        token_limit_reached=token_limit_reached,
+        message=TOKEN_LIMIT_REACHED_MESSAGE if token_limit_reached else None,
+    )
 
 
 async def _generate_session_title(llm: LLMDep, user_query: str, assistant_response: str) -> str | None:

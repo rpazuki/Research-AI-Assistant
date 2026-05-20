@@ -13,6 +13,7 @@ import {
   deleteSession,
   acceptInvitation,
   getAdminUser,
+  getChatQuota,
   getCorpusStats,
   getInvitation,
   getJournals,
@@ -30,6 +31,7 @@ import {
   streamMessage,
   submitFeedback,
   updateAdminUserStatus,
+  updateAdminUserTokenLimit,
   updateSessionTitle,
 } from "./api";
 
@@ -125,6 +127,8 @@ describe("admin user API", () => {
         full_name: "Admin",
         role: "admin",
         is_active: true,
+        token_limit: 1_000_000,
+        token_limit_reached: false,
         usage: {
           session_count: 3,
           user_message_count: 8,
@@ -154,6 +158,8 @@ describe("admin user API", () => {
       full_name: "Researcher",
       role: "researcher",
       is_active: true,
+      token_limit: 1_000_000,
+      token_limit_reached: false,
       usage: {
         session_count: 1,
         user_message_count: 2,
@@ -183,6 +189,8 @@ describe("admin user API", () => {
       full_name: "Researcher",
       role: "researcher",
       is_active: false,
+      token_limit: 1_000_000,
+      token_limit_reached: false,
       usage: {
         session_count: 1,
         user_message_count: 2,
@@ -203,6 +211,36 @@ describe("admin user API", () => {
     expect(call[0]).toBe("/api/backend/admin/users/u1");
     expect(call[1].method).toBe("PATCH");
     expect(JSON.parse(call[1].body)).toEqual({ is_active: false });
+  });
+
+  it("updates admin user token limit", async () => {
+    mockFetch(200, {
+      id: "u1",
+      email: "researcher@lab.ac.uk",
+      full_name: "Researcher",
+      role: "researcher",
+      is_active: true,
+      token_limit: 5_000_000,
+      token_limit_reached: false,
+      usage: {
+        session_count: 1,
+        user_message_count: 2,
+        assistant_message_count: 2,
+        prompt_token_count: 400,
+        completion_token_count: 100,
+        total_token_count: 500,
+        last_active_at: null,
+        avg_latency_ms: null,
+      },
+    });
+
+    const user = await updateAdminUserTokenLimit("u1", 5_000_000);
+
+    expect(user.token_limit).toBe(5_000_000);
+    const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe("/api/backend/admin/users/u1");
+    expect(call[1].method).toBe("PATCH");
+    expect(JSON.parse(call[1].body)).toEqual({ token_limit: 5000000 });
   });
 
   it("sends invitations", async () => {
@@ -293,6 +331,27 @@ describe("listSessions", () => {
     const result = await listSessions();
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("s1");
+  });
+});
+
+// ── getChatQuota ─────────────────────────────────────────────────────────────
+
+describe("getChatQuota", () => {
+  it("fetches the current user's token quota", async () => {
+    mockFetch(200, {
+      token_limit: 1_000_000,
+      total_token_count: 1_000_000,
+      token_limit_reached: true,
+      message: "Your token limit has been reached. Please ask your lab admin for more tokens.",
+    });
+
+    const result = await getChatQuota();
+
+    expect(result.token_limit_reached).toBe(true);
+    expect(result.total_token_count).toBe(1_000_000);
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      "/api/backend/chat/quota"
+    );
   });
 });
 
