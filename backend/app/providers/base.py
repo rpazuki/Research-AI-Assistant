@@ -21,6 +21,12 @@ class CompletionUsage:
     model: str
 
 
+@dataclass
+class LLMStreamChunk:
+    text: str | None = None
+    usage: CompletionUsage | None = None
+
+
 class LLMProvider(ABC):
     """Abstract LLM provider interface."""
 
@@ -45,10 +51,9 @@ class LLMProvider(ABC):
         messages: list[dict],
         max_tokens: int = 2048,
         temperature: float = 0.1,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[str | LLMStreamChunk]:
         """
-        Streaming completion.
-        Yields text tokens as they arrive.
-        The caller is responsible for assembling the full text.
+        Streaming completion. Yields text tokens as they arrive and may yield a
+        final usage chunk when the provider exposes stream token accounting.
         """
         ...

@@ -1,4 +1,10 @@
-import type { InvitationPreview, InvitationSendResponse, Source, User } from "@/types";
+import type {
+  AdminUserSummary,
+  InvitationPreview,
+  InvitationSendResponse,
+  Source,
+  User,
+} from "@/types";
 
 /**
  * Typed API client for the frontend proxy layer.
@@ -54,15 +60,15 @@ export async function getMe() {
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 export async function listAdminUsers() {
-  return apiFetch<User[]>("/admin/users");
+  return apiFetch<AdminUserSummary[]>("/admin/users");
 }
 
 export async function getAdminUser(userId: string) {
-  return apiFetch<User>(`/admin/users/${userId}`);
+  return apiFetch<AdminUserSummary>(`/admin/users/${userId}`);
 }
 
 export async function updateAdminUserStatus(userId: string, isActive: boolean) {
-  return apiFetch<User>(`/admin/users/${userId}`, {
+  return apiFetch<AdminUserSummary>(`/admin/users/${userId}`, {
     method: "PATCH",
     body: JSON.stringify({ is_active: isActive }),
   });
@@ -142,6 +148,8 @@ export async function getSession(sessionId: string) {
       role: "user" | "assistant";
       content: string;
       sources?: Source[];
+      prompt_tokens?: number | null;
+      completion_tokens?: number | null;
       created_at: string;
     }>;
   }>(`/chat/sessions/${sessionId}`);

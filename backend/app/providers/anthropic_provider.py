@@ -13,13 +13,11 @@ Handles:
 import time
 from collections.abc import AsyncIterator
 
-import anthropic
 from anthropic import AsyncAnthropic
 
-from app.core.config import settings
 from app.core.logging import log
 from app.core.resilience import llm_retry
-from app.providers.base import CompletionUsage, LLMProvider
+from app.providers.base import CompletionUsage, LLMProvider, LLMStreamChunk
 
 
 class AnthropicProvider(LLMProvider):
@@ -67,11 +65,12 @@ class AnthropicProvider(LLMProvider):
         messages: list[dict],
         max_tokens: int = 2048,
         temperature: float = 0.1,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[str | LLMStreamChunk]:
         """
-        Yields text chunks as they arrive from the Anthropic streaming API.
-        The caller assembles the full response.
+        Yields text chunks as they arrive from the Anthropic streaming API, then
+        emits a final usage chunk with input/output token counts.
         """
+        t0 = time.monotonic()
         async with self._client.messages.stream(
             model=self.model,
             system=system,
@@ -81,3 +80,19 @@ class AnthropicProvider(LLMProvider):
         ) as stream:
             async for text_chunk in stream.text_stream:
                 yield text_chunk
+            final_message = await stream.get_final_message()
+
+        usage = CompletionUsage(
+            prompt_tokens=final_message.usage.input_tokens,
+            completion_tokens=final_message.usage.output_tokens,
+            model=self.model,
+        )
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        log.info(
+            "llm_stream",
+            model=self.model,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            latency_ms=latency_ms,
+        )
+        yield LLMStreamChunk(usage=usage)

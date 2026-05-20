@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -219,6 +218,21 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
     async def fake_list_users(_db_obj):
         return [admin_user, researcher]
 
+    async def fake_get_usage_by_user(_db_obj, user_ids):
+        usage = {
+            researcher.id: {
+                "session_count": 2,
+                "user_message_count": 5,
+                "assistant_message_count": 4,
+                "prompt_token_count": 1000,
+                "completion_token_count": 250,
+                "total_token_count": 1250,
+                "last_active_at": datetime(2026, 5, 20, 9, 30, tzinfo=timezone.utc),
+                "avg_latency_ms": 123.4,
+            }
+        }
+        return {user_id: usage[user_id] for user_id in user_ids if user_id in usage}
+
     async def fake_get_user_by_id(_db_obj, user_id):
         if user_id == researcher.id:
             return researcher
@@ -233,6 +247,7 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
     app.dependency_overrides[deps.get_current_user] = override_current_user
     app.dependency_overrides[deps.get_db] = override_db
     monkeypatch.setattr("app.api.routes.admin.crud.list_users", fake_list_users)
+    monkeypatch.setattr("app.api.routes.admin.crud.get_usage_by_user", fake_get_usage_by_user)
     monkeypatch.setattr("app.api.routes.admin.crud.get_user_by_id", fake_get_user_by_id)
     monkeypatch.setattr("app.api.routes.admin.crud.update_user_active", fake_update_user_active)
 
@@ -244,10 +259,17 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
             "admin@example.com",
             "researcher@example.com",
         ]
+        users_body = users_response.json()
+        assert users_body[0]["usage"]["session_count"] == 0
+        assert users_body[1]["usage"]["session_count"] == 2
+        assert users_body[1]["usage"]["user_message_count"] == 5
+        assert users_body[1]["usage"]["total_token_count"] == 1250
+        assert users_body[1]["usage"]["avg_latency_ms"] == 123.4
 
         user_response = await client.get(f"/api/v1/admin/users/{researcher.id}")
         assert user_response.status_code == 200
         assert user_response.json()["id"] == str(researcher.id)
+        assert user_response.json()["usage"]["assistant_message_count"] == 4
 
         update_response = await client.patch(
             f"/api/v1/admin/users/{researcher.id}",
@@ -255,6 +277,7 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
         )
         assert update_response.status_code == 200
         assert update_response.json()["is_active"] is False
+        assert update_response.json()["usage"]["session_count"] == 2
 
         missing_response = await client.get(f"/api/v1/admin/users/{uuid.uuid4()}")
         assert missing_response.status_code == 404
@@ -417,7 +440,13 @@ async def test_chat_streaming_endpoint_emits_sse_and_persists_messages(api_clien
         )
         yield (
             "done",
-            {"retrieved_chunk_ids": [str(uuid.uuid4())], "llm_model": "claude-sonnet-4-6", "latency_ms": 9},
+            {
+                "retrieved_chunk_ids": [str(uuid.uuid4())],
+                "llm_model": "claude-sonnet-4-6",
+                "latency_ms": 9,
+                "prompt_tokens": 101,
+                "completion_tokens": 23,
+            },
             None,
         )
 
@@ -437,6 +466,10 @@ async def test_chat_streaming_endpoint_emits_sse_and_persists_messages(api_clien
     assert '"type": "done"' in text
     assert created_messages[0]["role"] == "user"
     assert created_messages[1]["llm_model"] == "claude-sonnet-4-6"
+    assert created_messages[1]["prompt_tokens"] == 101
+    assert created_messages[1]["completion_tokens"] == 23
+    assert '"prompt_tokens": 101' in text
+    assert '"completion_tokens": 23' in text
 
 
 @pytest.mark.asyncio

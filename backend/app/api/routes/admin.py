@@ -13,46 +13,56 @@ from app.api.deps import AdminUser, DBSession
 from app.core.config import settings
 from app.core.security import create_invitation_token, hash_invitation_token
 from app.db import crud
+from app.db.models import User
 from app.email.sendgrid import send_invitation_email
 from app.schemas.admin import (
+    AdminUserSummary,
     InvitationSendItem,
     InvitationSendRequest,
     InvitationSendResponse,
+    UserUsageSummary,
     UserStatusUpdate,
 )
-from app.schemas.auth import UserResponse
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-@router.get("/users", response_model=list[UserResponse])
-async def list_admin_users(_admin: AdminUser, db: DBSession) -> list[UserResponse]:
+@router.get("/users", response_model=list[AdminUserSummary])
+async def list_admin_users(_admin: AdminUser, db: DBSession) -> list[AdminUserSummary]:
     users = await crud.list_users(db)
-    return [UserResponse.model_validate(user) for user in users]
+    usage_by_user = await crud.get_usage_by_user(db, [user.id for user in users])
+    return [
+        _build_admin_user_summary(user=user, usage=usage_by_user.get(user.id, {}))
+        for user in users
+    ]
 
 
-@router.get("/users/{user_id}", response_model=UserResponse)
+@router.get("/users/{user_id}", response_model=AdminUserSummary)
 async def get_admin_user(
     user_id: uuid.UUID, _admin: AdminUser, db: DBSession
-) -> UserResponse:
+) -> AdminUserSummary:
     user = await crud.get_user_by_id(db, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return UserResponse.model_validate(user)
+    usage_by_user = await crud.get_usage_by_user(db, [user.id])
+    return _build_admin_user_summary(user=user, usage=usage_by_user.get(user.id, {}))
 
 
-@router.patch("/users/{user_id}", response_model=UserResponse)
+@router.patch("/users/{user_id}", response_model=AdminUserSummary)
 async def update_admin_user_status(
     user_id: uuid.UUID,
     body: UserStatusUpdate,
     _admin: AdminUser,
     db: DBSession,
-) -> UserResponse:
+) -> AdminUserSummary:
     user = await crud.get_user_by_id(db, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     updated_user = await crud.update_user_active(db, user=user, is_active=body.is_active)
-    return UserResponse.model_validate(updated_user)
+    usage_by_user = await crud.get_usage_by_user(db, [updated_user.id])
+    return _build_admin_user_summary(
+        user=updated_user, usage=usage_by_user.get(updated_user.id, {})
+    )
 
 
 @router.post("/invitations", response_model=InvitationSendResponse)
@@ -121,4 +131,15 @@ def _render_invitation_template(template: str, *, email: str, invite_link: str) 
         template.replace("{invite_link}", invite_link)
         .replace("{email}", email)
         .replace("{app_name}", settings.app_name)
+    )
+
+
+def _build_admin_user_summary(user: User, usage: dict | None = None) -> AdminUserSummary:
+    return AdminUserSummary(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        is_active=user.is_active,
+        usage=UserUsageSummary(**(usage or {})),
     )

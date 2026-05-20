@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ChatMessage, ChatSession, Document, Feedback, User, UserInvitation
@@ -46,6 +46,54 @@ async def create_user(db: AsyncSession, data: UserCreate) -> User:
 async def list_users(db: AsyncSession) -> Sequence[User]:
     result = await db.execute(select(User).order_by(User.email))
     return result.scalars().all()
+
+
+async def get_usage_by_user(
+    db: AsyncSession, user_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, dict]:
+    if not user_ids:
+        return {}
+
+    result = await db.execute(
+        select(
+            ChatSession.user_id,
+            func.count(distinct(ChatSession.id)).label("session_count"),
+            func.count(ChatMessage.id)
+            .filter(ChatMessage.role == "user")
+            .label("user_message_count"),
+            func.count(ChatMessage.id)
+            .filter(ChatMessage.role == "assistant")
+            .label("assistant_message_count"),
+            func.coalesce(func.sum(ChatMessage.prompt_tokens), 0).label("prompt_token_count"),
+            func.coalesce(func.sum(ChatMessage.completion_tokens), 0).label(
+                "completion_token_count"
+            ),
+            func.max(func.coalesce(ChatMessage.created_at, ChatSession.updated_at)).label(
+                "last_active_at"
+            ),
+            func.avg(ChatMessage.latency_ms)
+            .filter(ChatMessage.role == "assistant", ChatMessage.latency_ms.isnot(None))
+            .label("avg_latency_ms"),
+        )
+        .outerjoin(ChatMessage, ChatMessage.session_id == ChatSession.id)
+        .where(ChatSession.user_id.in_(list(user_ids)))
+        .group_by(ChatSession.user_id)
+    )
+
+    return {
+        row.user_id: {
+            "session_count": row.session_count or 0,
+            "user_message_count": row.user_message_count or 0,
+            "assistant_message_count": row.assistant_message_count or 0,
+            "prompt_token_count": int(row.prompt_token_count or 0),
+            "completion_token_count": int(row.completion_token_count or 0),
+            "total_token_count": int(row.prompt_token_count or 0)
+            + int(row.completion_token_count or 0),
+            "last_active_at": row.last_active_at,
+            "avg_latency_ms": float(row.avg_latency_ms) if row.avg_latency_ms is not None else None,
+        }
+        for row in result
+    }
 
 
 async def update_user_active(db: AsyncSession, user: User, is_active: bool) -> User:
@@ -178,7 +226,7 @@ async def create_feedback(
 # ── Analytics helpers ─────────────────────────────────────────────────────────
 
 async def count_documents_by_year(db: AsyncSession) -> list[dict]:
-    from sqlalchemy import func, text
+    from sqlalchemy import func
     result = await db.execute(
         select(Document.year, func.count(Document.id).label("count"))
         .where(Document.year.isnot(None))

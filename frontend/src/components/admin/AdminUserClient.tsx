@@ -5,11 +5,12 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { getAdminUser, updateAdminUserStatus } from "@/lib/api";
-import type { User } from "@/types";
+import type { AdminUserSummary } from "@/types";
+import { formatCount, formatLastActive, formatLatency } from "./usage";
 
 export default function AdminUserClient({ userId }: { userId: string }) {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AdminUserSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +100,52 @@ export default function AdminUserClient({ userId }: { userId: string }) {
                 <div>
                   <p className="text-xs font-semibold uppercase text-gray-500">Role</p>
                   <p className="mt-1 text-sm text-gray-800">{user.role}</p>
+                </div>
+              </div>
+              <div className="grid gap-4 px-4 py-5 sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-gray-500">Sessions</p>
+                  <p className="mt-1 text-sm tabular-nums text-gray-800">
+                    {formatCount(user.usage.session_count)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase text-gray-500">Questions</p>
+                  <p className="mt-1 text-sm tabular-nums text-gray-800">
+                    {formatCount(user.usage.user_message_count)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase text-gray-500">Total Tokens</p>
+                  <p className="mt-1 text-sm tabular-nums text-gray-800">
+                    {formatCount(user.usage.total_token_count)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase text-gray-500">Last Active</p>
+                  <p className="mt-1 text-sm text-gray-800">
+                    {formatLastActive(user.usage.last_active_at)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase text-gray-500">Avg Latency</p>
+                  <p className="mt-1 text-sm tabular-nums text-gray-800">
+                    {formatLatency(user.usage.avg_latency_ms)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase text-gray-500">Prompt Tokens</p>
+                  <p className="mt-1 text-sm tabular-nums text-gray-800">
+                    {formatCount(user.usage.prompt_token_count)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase text-gray-500">
+                    Completion Tokens
+                  </p>
+                  <p className="mt-1 text-sm tabular-nums text-gray-800">
+                    {formatCount(user.usage.completion_token_count)}
+                  </p>
                 </div>
               </div>
               <div className="px-4 py-5">

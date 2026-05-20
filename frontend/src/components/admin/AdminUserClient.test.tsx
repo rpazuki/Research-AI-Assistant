@@ -31,6 +31,16 @@ describe("AdminUserClient", () => {
       full_name: "Researcher",
       role: "researcher",
       is_active: true,
+      usage: {
+        session_count: 3,
+        user_message_count: 9,
+        assistant_message_count: 8,
+        prompt_token_count: 2000,
+        completion_token_count: 700,
+        total_token_count: 2700,
+        last_active_at: null,
+        avg_latency_ms: 612.2,
+      },
     });
     updateAdminUserStatus.mockResolvedValue({
       id: "user-1",
@@ -38,6 +48,16 @@ describe("AdminUserClient", () => {
       full_name: "Researcher",
       role: "researcher",
       is_active: false,
+      usage: {
+        session_count: 3,
+        user_message_count: 9,
+        assistant_message_count: 8,
+        prompt_token_count: 2000,
+        completion_token_count: 700,
+        total_token_count: 2700,
+        last_active_at: null,
+        avg_latency_ms: 612.2,
+      },
     });
 
     render(<AdminUserClient userId="user-1" />);
@@ -45,6 +65,14 @@ describe("AdminUserClient", () => {
     await waitFor(() => {
       expect(screen.getByText("researcher@example.com")).toBeInTheDocument();
     });
+    expect(screen.getByText("Sessions")).toBeInTheDocument();
+    expect(screen.getByText("Questions")).toBeInTheDocument();
+    expect(screen.getByText("9")).toBeInTheDocument();
+    expect(screen.getByText("Total Tokens")).toBeInTheDocument();
+    expect(screen.getByText("2,700")).toBeInTheDocument();
+    expect(screen.getByText("2,000")).toBeInTheDocument();
+    expect(screen.getByText("700")).toBeInTheDocument();
+    expect(screen.getByText("612 ms")).toBeInTheDocument();
 
     const checkbox = screen.getByRole("checkbox", { name: /active account/i });
     expect(checkbox).toBeChecked();

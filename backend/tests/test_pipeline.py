@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from types import SimpleNamespace
 
 import pytest
 
+from app.providers.base import CompletionUsage, LLMStreamChunk
 from app.rag.pipeline import _chunk_to_dict, _format_exception_message, run_rag_stream
 from app.rag.retrieval import RetrievedChunk
 
@@ -84,6 +84,13 @@ class FakeLLM:
     async def stream(self, *_args, **_kwargs):
         for token in ["Hello", " world"]:
             yield token
+        yield LLMStreamChunk(
+            usage=CompletionUsage(
+                prompt_tokens=101,
+                completion_tokens=23,
+                model=self.model,
+            )
+        )
 
 
 class FakeDB:
@@ -179,3 +186,5 @@ async def test_run_rag_stream_done_event_contains_latency_and_model(monkeypatch:
     assert "latency_ms" in done_data
     assert done_data["llm_model"] == "claude-sonnet-4-6"
     assert isinstance(done_data["latency_ms"], int)
+    assert done_data["prompt_tokens"] == 101
+    assert done_data["completion_tokens"] == 23

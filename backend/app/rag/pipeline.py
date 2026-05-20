@@ -12,7 +12,6 @@ Route handlers call run_rag_stream() and consume the async generator.
 from __future__ import annotations
 
 import time
-import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -21,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.logging import log
 from app.embeddings.base import EmbeddingModel
-from app.providers.base import LLMProvider
+from app.providers.base import CompletionUsage, LLMProvider, LLMStreamChunk
 from app.rag.citations import build_sources
 from app.rag.prompts import build_context_block, get_system_prompt
 from app.rag.retrieval import RetrievedChunk, retrieve
@@ -82,15 +81,22 @@ async def run_rag_stream(
         full_system = f"{system_prompt}\n\n{context_block}"
 
         messages = [{"role": "user", "content": query}]
+        usage: CompletionUsage | None = None
 
         # 3. Stream generation
-        async for token in llm_provider.stream(
+        async for chunk in llm_provider.stream(
             system=full_system,
             messages=messages,
             max_tokens=settings.llm_max_tokens,
             temperature=settings.llm_temperature,
         ):
-            yield ("token", token, None)
+            if isinstance(chunk, LLMStreamChunk):
+                if chunk.usage is not None:
+                    usage = chunk.usage
+                if chunk.text:
+                    yield ("token", chunk.text, None)
+            else:
+                yield ("token", chunk, None)
 
         # 4. Emit sources after streaming completes
         sources = build_sources(chunks)
@@ -102,13 +108,17 @@ async def run_rag_stream(
             mode=mode,
             chunks_retrieved=len(chunks),
             latency_ms=latency_ms,
+            prompt_tokens=usage.prompt_tokens if usage else None,
+            completion_tokens=usage.completion_tokens if usage else None,
         )
         yield (
             "done",
             {
                 "retrieved_chunk_ids": [str(chunk.chunk_id) for chunk in chunks],
-                "llm_model": getattr(llm_provider, "model", None),
+                "llm_model": usage.model if usage else getattr(llm_provider, "model", None),
                 "latency_ms": latency_ms,
+                "prompt_tokens": usage.prompt_tokens if usage else None,
+                "completion_tokens": usage.completion_tokens if usage else None,
             },
             None,
         )

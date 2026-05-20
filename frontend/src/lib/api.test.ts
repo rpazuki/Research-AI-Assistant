@@ -125,6 +125,16 @@ describe("admin user API", () => {
         full_name: "Admin",
         role: "admin",
         is_active: true,
+        usage: {
+          session_count: 3,
+          user_message_count: 8,
+          assistant_message_count: 8,
+          prompt_token_count: 1200,
+          completion_token_count: 300,
+          total_token_count: 1500,
+          last_active_at: "2026-05-20T09:30:00Z",
+          avg_latency_ms: 812.5,
+        },
       },
     ]);
 
@@ -132,6 +142,8 @@ describe("admin user API", () => {
 
     expect(users).toHaveLength(1);
     expect(users[0].email).toBe("admin@lab.ac.uk");
+    expect(users[0].usage.session_count).toBe(3);
+    expect(users[0].usage.total_token_count).toBe(1500);
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe("/api/backend/admin/users");
   });
 
@@ -142,11 +154,23 @@ describe("admin user API", () => {
       full_name: "Researcher",
       role: "researcher",
       is_active: true,
+      usage: {
+        session_count: 1,
+        user_message_count: 2,
+        assistant_message_count: 2,
+        prompt_token_count: 400,
+        completion_token_count: 100,
+        total_token_count: 500,
+        last_active_at: null,
+        avg_latency_ms: null,
+      },
     });
 
     const user = await getAdminUser("u1");
 
     expect(user.id).toBe("u1");
+    expect(user.usage.session_count).toBe(1);
+    expect(user.usage.prompt_token_count).toBe(400);
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
       "/api/backend/admin/users/u1"
     );
@@ -159,11 +183,22 @@ describe("admin user API", () => {
       full_name: "Researcher",
       role: "researcher",
       is_active: false,
+      usage: {
+        session_count: 1,
+        user_message_count: 2,
+        assistant_message_count: 2,
+        prompt_token_count: 400,
+        completion_token_count: 100,
+        total_token_count: 500,
+        last_active_at: null,
+        avg_latency_ms: null,
+      },
     });
 
     const user = await updateAdminUserStatus("u1", false);
 
     expect(user.is_active).toBe(false);
+    expect(user.usage.user_message_count).toBe(2);
     const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call[0]).toBe("/api/backend/admin/users/u1");
     expect(call[1].method).toBe("PATCH");

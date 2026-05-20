@@ -155,6 +155,8 @@ async def post_message(
                     latency_ms = int(payload_data.get("latency_ms", int((time.monotonic() - t0) * 1000)))
                     chunk_ids = payload_data.get("retrieved_chunk_ids", [])
                     llm_model = payload_data.get("llm_model")
+                    prompt_tokens = payload_data.get("prompt_tokens")
+                    completion_tokens = payload_data.get("completion_tokens")
                     # Save assistant message
                     msg = await crud.create_chat_message(
                         db,
@@ -164,6 +166,8 @@ async def post_message(
                         retrieved_chunks=chunk_ids,
                         sources=[s.model_dump() for s in final_sources],
                         llm_model=llm_model,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
                         latency_ms=latency_ms,
                     )
                     if should_auto_title and full_response:
@@ -179,7 +183,13 @@ async def post_message(
                                 title=generated_title,
                             )
                     payload = json.dumps(
-                        {"type": "done", "message_id": str(msg.id), "latency_ms": latency_ms}
+                        {
+                            "type": "done",
+                            "message_id": str(msg.id),
+                            "latency_ms": latency_ms,
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                        }
                     )
                     yield f"data: {payload}\n\n"
 

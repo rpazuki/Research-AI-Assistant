@@ -28,6 +28,8 @@ class ChatMessageResponse(BaseModel):
     content: str
     sources: list[SourceSchema] | None = None
     llm_model: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     latency_ms: int | None = None
     created_at: datetime
 

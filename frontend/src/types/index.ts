@@ -8,6 +8,21 @@ export interface User {
   is_active: boolean;
 }
 
+export interface UserUsageSummary {
+  session_count: number;
+  user_message_count: number;
+  assistant_message_count: number;
+  prompt_token_count: number;
+  completion_token_count: number;
+  total_token_count: number;
+  last_active_at: string | null;
+  avg_latency_ms: number | null;
+}
+
+export interface AdminUserSummary extends User {
+  usage: UserUsageSummary;
+}
+
 export interface InvitationSendItem {
   email: string;
   status: "sent" | "failed";
@@ -42,6 +57,8 @@ export interface ChatMessage {
   content: string;
   sources?: Source[] | null;
   llm_model?: string | null;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
   latency_ms?: number | null;
   created_at: string;
 }
@@ -90,6 +107,8 @@ export interface SSEDoneEvent {
   type: "done";
   message_id: string;
   latency_ms: number;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
 }
 
 export interface SSEErrorEvent {
