@@ -7,8 +7,10 @@ import ChatClient from "./ChatClient";
 const push = vi.fn();
 
 const createSession = vi.fn();
+const getAdminUserSession = vi.fn();
 const getChatQuota = vi.fn();
 const getSession = vi.fn();
+const listAdminUserSessions = vi.fn();
 const listSessions = vi.fn();
 const deleteSession = vi.fn();
 const logout = vi.fn();
@@ -21,8 +23,10 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/api", () => ({
   createSession: (...args: unknown[]) => createSession(...args),
+  getAdminUserSession: (...args: unknown[]) => getAdminUserSession(...args),
   getChatQuota: (...args: unknown[]) => getChatQuota(...args),
   getSession: (...args: unknown[]) => getSession(...args),
+  listAdminUserSessions: (...args: unknown[]) => listAdminUserSessions(...args),
   listSessions: (...args: unknown[]) => listSessions(...args),
   deleteSession: (...args: unknown[]) => deleteSession(...args),
   logout: (...args: unknown[]) => logout(...args),
@@ -34,8 +38,10 @@ describe("ChatClient", () => {
   beforeEach(() => {
     push.mockReset();
     createSession.mockReset();
+    getAdminUserSession.mockReset();
     getChatQuota.mockReset();
     getSession.mockReset();
+    listAdminUserSessions.mockReset();
     listSessions.mockReset();
     deleteSession.mockReset();
     logout.mockReset();
@@ -43,7 +49,24 @@ describe("ChatClient", () => {
     updateSessionTitle.mockReset();
 
     listSessions.mockResolvedValue([
-      { id: "session-1", title: "Initial title", mode: "researcher", updated_at: "2026-05-16T00:00:00Z" },
+      {
+        id: "session-1",
+        user_id: "current-user",
+        title: "Initial title",
+        mode: "researcher",
+        created_at: "2026-05-16T00:00:00Z",
+        updated_at: "2026-05-16T00:00:00Z",
+      },
+    ]);
+    listAdminUserSessions.mockResolvedValue([
+      {
+        id: "session-1",
+        user_id: "user-1",
+        title: "Initial title",
+        mode: "researcher",
+        created_at: "2026-05-16T00:00:00Z",
+        updated_at: "2026-05-16T00:00:00Z",
+      },
     ]);
     getChatQuota.mockResolvedValue({
       token_limit: 1_000_000,
@@ -53,7 +76,20 @@ describe("ChatClient", () => {
     });
     getSession.mockResolvedValue({
       id: "session-1",
+      user_id: "current-user",
       mode: "researcher",
+      title: "Initial title",
+      created_at: "2026-05-16T00:00:00Z",
+      updated_at: "2026-05-16T00:00:00Z",
+      messages: [],
+    });
+    getAdminUserSession.mockResolvedValue({
+      id: "session-1",
+      user_id: "user-1",
+      mode: "researcher",
+      title: "Initial title",
+      created_at: "2026-05-16T00:00:00Z",
+      updated_at: "2026-05-16T00:00:00Z",
       messages: [],
     });
     updateSessionTitle.mockResolvedValue({
@@ -163,5 +199,54 @@ describe("ChatClient", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Initial title" }));
     expect(push).toHaveBeenCalledWith("/chat/session-1");
+  });
+
+  it("renders another user's chats in read-only admin mode", async () => {
+    getAdminUserSession.mockResolvedValueOnce({
+      id: "session-1",
+      user_id: "user-1",
+      title: "Initial title",
+      mode: "researcher",
+      created_at: "2026-05-16T00:00:00Z",
+      updated_at: "2026-05-16T00:00:00Z",
+      messages: [
+        {
+          id: "message-1",
+          session_id: "session-1",
+          role: "user",
+          content: "How did I ask this?",
+          created_at: "2026-05-16T00:00:00Z",
+        },
+        {
+          id: "message-2",
+          session_id: "session-1",
+          role: "assistant",
+          content: "Exactly like this.",
+          created_at: "2026-05-16T00:00:00Z",
+        },
+      ],
+    });
+
+    render(<ChatClient adminUserId="user-1" initialSessionId="session-1" readOnly />);
+
+    await waitFor(() => {
+      expect(screen.getByText("How did I ask this?")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Exactly like this.")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Read-only admin view");
+    expect(screen.getByRole("button", { name: /\+ new chat/i })).toBeDisabled();
+    expect(screen.getByPlaceholderText("Read-only admin view")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(getChatQuota).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Initial title" }));
+    expect(screen.queryByRole("menuitem", { name: "Rename" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Initial title" }));
+    expect(push).toHaveBeenCalledWith("/admin/users/user-1/experience/session-1");
+    expect(createSession).not.toHaveBeenCalled();
+    expect(updateSessionTitle).not.toHaveBeenCalled();
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(streamMessage).not.toHaveBeenCalled();
   });
 });

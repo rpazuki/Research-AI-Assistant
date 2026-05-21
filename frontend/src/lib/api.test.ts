@@ -13,6 +13,7 @@ import {
   deleteSession,
   acceptInvitation,
   getAdminUser,
+  getAdminUserSession,
   getChatQuota,
   getCorpusStats,
   getInvitation,
@@ -24,11 +25,13 @@ import {
   getTopics,
   listSessions,
   listAdminUsers,
+  listAdminUserSessions,
   login,
   logout,
   search,
   sendInvitations,
   streamMessage,
+  updateAdminUserRole,
   submitFeedback,
   updateAdminUserStatus,
   updateAdminUserTokenLimit,
@@ -182,6 +185,54 @@ describe("admin user API", () => {
     );
   });
 
+  it("lists a user's sessions for admin read-only viewing", async () => {
+    mockFetch(200, [
+      {
+        id: "s1",
+        user_id: "u1",
+        title: "User chat",
+        mode: "researcher",
+        created_at: "2026-05-20T09:00:00Z",
+        updated_at: "2026-05-20T09:30:00Z",
+      },
+    ]);
+
+    const sessions = await listAdminUserSessions("u1");
+
+    expect(sessions[0].title).toBe("User chat");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      "/api/backend/admin/users/u1/chat/sessions"
+    );
+  });
+
+  it("fetches a user's session with messages for admin read-only viewing", async () => {
+    mockFetch(200, {
+      id: "s1",
+      user_id: "u1",
+      title: "User chat",
+      mode: "researcher",
+      created_at: "2026-05-20T09:00:00Z",
+      updated_at: "2026-05-20T09:30:00Z",
+      messages: [
+        {
+          id: "m1",
+          session_id: "s1",
+          role: "user",
+          content: "What did I ask?",
+          sources: null,
+          created_at: "2026-05-20T09:00:00Z",
+        },
+      ],
+    });
+
+    const session = await getAdminUserSession("u1", "s1");
+
+    expect(session.messages[0].content).toBe("What did I ask?");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      "/api/backend/admin/users/u1/chat/sessions/s1"
+    );
+  });
+
   it("updates admin user active status", async () => {
     mockFetch(200, {
       id: "u1",
@@ -241,6 +292,36 @@ describe("admin user API", () => {
     expect(call[0]).toBe("/api/backend/admin/users/u1");
     expect(call[1].method).toBe("PATCH");
     expect(JSON.parse(call[1].body)).toEqual({ token_limit: 5000000 });
+  });
+
+  it("updates admin user role", async () => {
+    mockFetch(200, {
+      id: "u1",
+      email: "researcher@lab.ac.uk",
+      full_name: "Researcher",
+      role: "admin",
+      is_active: true,
+      token_limit: 1_000_000,
+      token_limit_reached: false,
+      usage: {
+        session_count: 1,
+        user_message_count: 2,
+        assistant_message_count: 2,
+        prompt_token_count: 400,
+        completion_token_count: 100,
+        total_token_count: 500,
+        last_active_at: null,
+        avg_latency_ms: null,
+      },
+    });
+
+    const user = await updateAdminUserRole("u1", "admin");
+
+    expect(user.role).toBe("admin");
+    const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe("/api/backend/admin/users/u1");
+    expect(call[1].method).toBe("PATCH");
+    expect(JSON.parse(call[1].body)).toEqual({ role: "admin" });
   });
 
   it("sends invitations", async () => {

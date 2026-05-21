@@ -253,6 +253,43 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
         user.token_limit = token_limit
         return user
 
+    async def fake_update_user_role(_db_obj, user, role: str):
+        user.role = role
+        return user
+
+    session_id = uuid.uuid4()
+    message_id = uuid.uuid4()
+    user_session = SimpleNamespace(
+        id=session_id,
+        user_id=researcher.id,
+        mode="researcher",
+        title="Lipid engineering",
+        created_at=datetime(2026, 5, 20, 9, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 20, 9, 30, tzinfo=timezone.utc),
+    )
+    user_message = SimpleNamespace(
+        id=message_id,
+        session_id=session_id,
+        role="user",
+        content="What did I ask?",
+        sources=None,
+        llm_model=None,
+        prompt_tokens=None,
+        completion_tokens=None,
+        latency_ms=None,
+        created_at=datetime(2026, 5, 20, 9, 1, tzinfo=timezone.utc),
+    )
+
+    async def fake_get_sessions_for_user(_db_obj, user_id):
+        return [user_session] if user_id == researcher.id else []
+
+    async def fake_get_session(_db_obj, requested_session_id):
+        return user_session if requested_session_id == session_id else None
+
+    async def fake_get_messages_for_session(_db_obj, requested_session_id=None, **kwargs):
+        requested_session_id = requested_session_id or kwargs.get("session_id")
+        return [user_message] if requested_session_id == session_id else []
+
     app.dependency_overrides[deps.get_current_user] = override_current_user
     app.dependency_overrides[deps.get_db] = override_db
     monkeypatch.setattr("app.api.routes.admin.crud.list_users", fake_list_users)
@@ -262,6 +299,16 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
     monkeypatch.setattr(
         "app.api.routes.admin.crud.update_user_token_limit",
         fake_update_user_token_limit,
+    )
+    monkeypatch.setattr("app.api.routes.admin.crud.update_user_role", fake_update_user_role)
+    monkeypatch.setattr(
+        "app.api.routes.admin.crud.get_sessions_for_user",
+        fake_get_sessions_for_user,
+    )
+    monkeypatch.setattr("app.api.routes.admin.crud.get_session", fake_get_session)
+    monkeypatch.setattr(
+        "app.api.routes.admin.crud.get_messages_for_session",
+        fake_get_messages_for_session,
     )
 
     transport = httpx.ASGITransport(app=app)
@@ -299,6 +346,37 @@ async def test_admin_user_endpoints_list_get_and_update_users(monkeypatch: pytes
         )
         assert limit_response.status_code == 200
         assert limit_response.json()["token_limit"] == 5_000_000
+
+        role_response = await client.patch(
+            f"/api/v1/admin/users/{researcher.id}",
+            json={"role": "admin"},
+        )
+        assert role_response.status_code == 200
+        assert role_response.json()["role"] == "admin"
+
+        invalid_role_response = await client.patch(
+            f"/api/v1/admin/users/{researcher.id}",
+            json={"role": "owner"},
+        )
+        assert invalid_role_response.status_code == 422
+
+        sessions_response = await client.get(
+            f"/api/v1/admin/users/{researcher.id}/chat/sessions"
+        )
+        assert sessions_response.status_code == 200
+        assert sessions_response.json()[0]["id"] == str(session_id)
+        assert sessions_response.json()[0]["title"] == "Lipid engineering"
+
+        session_response = await client.get(
+            f"/api/v1/admin/users/{researcher.id}/chat/sessions/{session_id}"
+        )
+        assert session_response.status_code == 200
+        assert session_response.json()["messages"][0]["content"] == "What did I ask?"
+
+        mismatched_user_response = await client.get(
+            f"/api/v1/admin/users/{admin_user.id}/chat/sessions/{session_id}"
+        )
+        assert mismatched_user_response.status_code == 404
 
         missing_response = await client.get(f"/api/v1/admin/users/{uuid.uuid4()}")
         assert missing_response.status_code == 404

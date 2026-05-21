@@ -120,7 +120,7 @@ export default function AdminUsersClient() {
                     <th className="px-4 py-3 text-right">Tokens</th>
                     <th className="px-4 py-3">Last Active</th>
                     <th className="px-4 py-3 text-right">Avg Latency</th>
-                    <th className="px-4 py-3 text-right">Profile</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -156,12 +156,20 @@ export default function AdminUsersClient() {
                           {formatLatency(user.usage.avg_latency_ms)}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <Link
-                            href={`/admin/users/${user.id}`}
-                            className="text-sm font-medium text-blue-600 hover:underline"
-                          >
-                            View user
-                          </Link>
+                          <div className="flex justify-end gap-3">
+                            <Link
+                              href={`/admin/users/${user.id}/experience`}
+                              className="rounded-md border border-blue-200 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50"
+                            >
+                              View experience
+                            </Link>
+                            <Link
+                              href={`/admin/users/${user.id}`}
+                              className="text-sm font-medium text-blue-600 hover:underline"
+                            >
+                              View user
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     );

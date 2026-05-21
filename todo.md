@@ -15,9 +15,12 @@
 - [x] 5. Add user invitation acceptance page.
   - Proposed date: 2026-05-19
   - Finish date: 2026-05-20
-- [ ] 6. Add view users experience from admin feature.
+- [x] 6. Add view users experience from admin feature.
   - Proposed date: 2026-05-19
-  - Finish date: NA
+  - Finish date: 2026-05-21
 - [x] 7. Add users token limits.
   - Proposed date: 2026-05-20
-  - Finish date: NA
+  - Finish date: 2026-05-20
+- [x] 8. Change users roles.
+  - Proposed date: 2026-05-21
+  - Finish date: 2026-05-21

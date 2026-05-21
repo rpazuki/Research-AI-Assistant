@@ -6,6 +6,7 @@ import AdminUserClient from "./AdminUserClient";
 
 const push = vi.fn();
 const getAdminUser = vi.fn();
+const updateAdminUserRole = vi.fn();
 const updateAdminUserStatus = vi.fn();
 const updateAdminUserTokenLimit = vi.fn();
 
@@ -15,6 +16,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/api", () => ({
   getAdminUser: (...args: unknown[]) => getAdminUser(...args),
+  updateAdminUserRole: (...args: unknown[]) => updateAdminUserRole(...args),
   updateAdminUserStatus: (...args: unknown[]) => updateAdminUserStatus(...args),
   updateAdminUserTokenLimit: (...args: unknown[]) => updateAdminUserTokenLimit(...args),
 }));
@@ -23,6 +25,7 @@ describe("AdminUserClient", () => {
   beforeEach(() => {
     push.mockReset();
     getAdminUser.mockReset();
+    updateAdminUserRole.mockReset();
     updateAdminUserStatus.mockReset();
     updateAdminUserTokenLimit.mockReset();
   });
@@ -91,6 +94,60 @@ describe("AdminUserClient", () => {
     });
     await waitFor(() => {
       expect(screen.getByRole("checkbox", { name: /active account/i })).not.toBeChecked();
+    });
+  });
+
+  it("updates the user's role from the role selector", async () => {
+    getAdminUser.mockResolvedValue({
+      id: "user-1",
+      email: "researcher@example.com",
+      full_name: "Researcher",
+      role: "researcher",
+      is_active: true,
+      token_limit: 1_000_000,
+      token_limit_reached: false,
+      usage: {
+        session_count: 3,
+        user_message_count: 9,
+        assistant_message_count: 8,
+        prompt_token_count: 2000,
+        completion_token_count: 700,
+        total_token_count: 2700,
+        last_active_at: null,
+        avg_latency_ms: 612.2,
+      },
+    });
+    updateAdminUserRole.mockResolvedValue({
+      id: "user-1",
+      email: "researcher@example.com",
+      full_name: "Researcher",
+      role: "admin",
+      is_active: true,
+      token_limit: 1_000_000,
+      token_limit_reached: false,
+      usage: {
+        session_count: 3,
+        user_message_count: 9,
+        assistant_message_count: 8,
+        prompt_token_count: 2000,
+        completion_token_count: 700,
+        total_token_count: 2700,
+        last_active_at: null,
+        avg_latency_ms: 612.2,
+      },
+    });
+
+    render(<AdminUserClient userId="user-1" />);
+
+    const roleSelect = await screen.findByLabelText("User role");
+    expect(roleSelect).toHaveValue("researcher");
+    fireEvent.change(roleSelect, { target: { value: "admin" } });
+
+    await waitFor(() => {
+      expect(updateAdminUserRole).toHaveBeenCalledWith("user-1", "admin");
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("User role")).toHaveValue("admin");
     });
   });
 

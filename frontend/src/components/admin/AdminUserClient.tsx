@@ -4,8 +4,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { getAdminUser, updateAdminUserStatus, updateAdminUserTokenLimit } from "@/lib/api";
-import type { AdminUserSummary } from "@/types";
+import {
+  getAdminUser,
+  updateAdminUserRole,
+  updateAdminUserStatus,
+  updateAdminUserTokenLimit,
+} from "@/lib/api";
+import type { AdminUserSummary, User } from "@/types";
 import { formatCount, formatLastActive, formatLatency } from "./usage";
 
 const TOKEN_LIMIT_INCREMENT_OPTIONS = Array.from({ length: 100 }, (_, index) => index + 1).map((millions) => ({
@@ -18,6 +23,7 @@ export default function AdminUserClient({ userId }: { userId: string }) {
   const [user, setUser] = useState<AdminUserSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingRole, setSavingRole] = useState(false);
   const [savingTokenLimit, setSavingTokenLimit] = useState(false);
   const [isEditingTokenLimit, setIsEditingTokenLimit] = useState(false);
   const [tokenLimitInput, setTokenLimitInput] = useState("");
@@ -63,6 +69,27 @@ export default function AdminUserClient({ userId }: { userId: string }) {
       setError(err instanceof Error ? err.message : "Failed to update user status");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleRoleChange(role: User["role"]) {
+    if (!user || savingRole || role === user.role) {
+      return;
+    }
+
+    const previousUser = user;
+    setUser({ ...user, role });
+    setSavingRole(true);
+    setError(null);
+
+    try {
+      const updated = await updateAdminUserRole(user.id, role);
+      setUser(updated);
+    } catch (err) {
+      setUser(previousUser);
+      setError(err instanceof Error ? err.message : "Failed to update user role");
+    } finally {
+      setSavingRole(false);
     }
   }
 
@@ -165,7 +192,17 @@ export default function AdminUserClient({ userId }: { userId: string }) {
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase text-gray-500">Role</p>
-                  <p className="mt-1 text-sm text-gray-800">{user.role}</p>
+                  <select
+                    value={user.role}
+                    disabled={savingRole}
+                    onChange={(event) => void handleRoleChange(event.target.value as User["role"])}
+                    className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 sm:max-w-xs"
+                    aria-label="User role"
+                  >
+                    <option value="researcher">Researcher</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                  {savingRole && <p className="mt-2 text-sm text-gray-500">Saving role...</p>}
                 </div>
               </div>
               <div className="grid gap-4 px-4 py-5 sm:grid-cols-2 lg:grid-cols-4">

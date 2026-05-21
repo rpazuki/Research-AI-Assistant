@@ -133,6 +133,10 @@ describe("AdminUsersClient", () => {
       "href",
       "/admin/users/user-1"
     );
+    expect(screen.getAllByRole("link", { name: "View experience" })[0]).toHaveAttribute(
+      "href",
+      "/admin/users/user-1/experience"
+    );
   });
 
   it("redirects to login when unauthorized", async () => {

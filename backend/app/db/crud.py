@@ -108,6 +108,12 @@ async def update_user_token_limit(db: AsyncSession, user: User, token_limit: int
     return user
 
 
+async def update_user_role(db: AsyncSession, user: User, role: str) -> User:
+    user.role = role
+    await db.flush()
+    return user
+
+
 # ── Invitations ───────────────────────────────────────────────────────────────
 
 async def create_user_invitation(

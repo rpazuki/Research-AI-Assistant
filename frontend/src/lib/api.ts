@@ -1,9 +1,10 @@
 import type {
   AdminUserSummary,
+  ChatSession,
+  ChatSessionWithMessages,
   ChatQuota,
   InvitationPreview,
   InvitationSendResponse,
-  Source,
   User,
 } from "@/types";
 
@@ -68,6 +69,16 @@ export async function getAdminUser(userId: string) {
   return apiFetch<AdminUserSummary>(`/admin/users/${userId}`);
 }
 
+export async function listAdminUserSessions(userId: string) {
+  return apiFetch<ChatSession[]>(`/admin/users/${userId}/chat/sessions`);
+}
+
+export async function getAdminUserSession(userId: string, sessionId: string) {
+  return apiFetch<ChatSessionWithMessages>(
+    `/admin/users/${userId}/chat/sessions/${sessionId}`
+  );
+}
+
 export async function updateAdminUserStatus(userId: string, isActive: boolean) {
   return apiFetch<AdminUserSummary>(`/admin/users/${userId}`, {
     method: "PATCH",
@@ -79,6 +90,13 @@ export async function updateAdminUserTokenLimit(userId: string, tokenLimit: numb
   return apiFetch<AdminUserSummary>(`/admin/users/${userId}`, {
     method: "PATCH",
     body: JSON.stringify({ token_limit: tokenLimit }),
+  });
+}
+
+export async function updateAdminUserRole(userId: string, role: User["role"]) {
+  return apiFetch<AdminUserSummary>(`/admin/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
   });
 }
 
@@ -141,9 +159,7 @@ export async function createSession(mode = "researcher", title?: string) {
 }
 
 export async function listSessions() {
-  return apiFetch<Array<{ id: string; title: string | null; mode: string; updated_at: string }>>(
-    "/chat/sessions"
-  );
+  return apiFetch<ChatSession[]>("/chat/sessions");
 }
 
 export async function getChatQuota() {
@@ -151,20 +167,7 @@ export async function getChatQuota() {
 }
 
 export async function getSession(sessionId: string) {
-  return apiFetch<{
-    id: string;
-    mode: string;
-    messages: Array<{
-      id: string;
-      session_id: string;
-      role: "user" | "assistant";
-      content: string;
-      sources?: Source[];
-      prompt_tokens?: number | null;
-      completion_tokens?: number | null;
-      created_at: string;
-    }>;
-  }>(`/chat/sessions/${sessionId}`);
+  return apiFetch<ChatSessionWithMessages>(`/chat/sessions/${sessionId}`);
 }
 
 export async function deleteSession(sessionId: string) {

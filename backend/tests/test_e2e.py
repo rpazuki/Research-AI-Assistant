@@ -229,7 +229,11 @@ async def test_create_session_returns_201_with_session_data(monkeypatch: pytest.
             created_at=_now(), updated_at=_now(),
         )
 
+    async def fake_get_usage_by_user(_db, user_ids):
+        return {user_id: {"total_token_count": 0} for user_id in user_ids}
+
     monkeypatch.setattr("app.api.routes.chat.crud.create_chat_session", fake_create_chat_session)
+    monkeypatch.setattr("app.api.routes.chat.crud.get_usage_by_user", fake_get_usage_by_user)
 
     async with _make_client(user) as (c, _u, _db):
         resp = await c.post("/api/v1/chat/sessions", json={"mode": "researcher"})
@@ -375,9 +379,18 @@ async def test_admin_user_management_endpoints(monkeypatch: pytest.MonkeyPatch) 
         user.is_active = is_active
         return user
 
+    async def fake_update_user_role(_db, user, role):
+        user.role = role
+        return user
+
+    async def fake_get_usage_by_user(_db, user_ids):
+        return {user_id: {} for user_id in user_ids}
+
     monkeypatch.setattr("app.api.routes.admin.crud.list_users", fake_list_users)
     monkeypatch.setattr("app.api.routes.admin.crud.get_user_by_id", fake_get_user_by_id)
     monkeypatch.setattr("app.api.routes.admin.crud.update_user_active", fake_update_user_active)
+    monkeypatch.setattr("app.api.routes.admin.crud.update_user_role", fake_update_user_role)
+    monkeypatch.setattr("app.api.routes.admin.crud.get_usage_by_user", fake_get_usage_by_user)
 
     async with _make_client(admin) as (c, _u, _db):
         list_resp = await c.get("/api/v1/admin/users")
@@ -386,6 +399,14 @@ async def test_admin_user_management_endpoints(monkeypatch: pytest.MonkeyPatch) 
             f"/api/v1/admin/users/{researcher.id}",
             json={"is_active": False},
         )
+        role_resp = await c.patch(
+            f"/api/v1/admin/users/{researcher.id}",
+            json={"role": "admin"},
+        )
+        invalid_role_resp = await c.patch(
+            f"/api/v1/admin/users/{researcher.id}",
+            json={"role": "owner"},
+        )
 
     assert list_resp.status_code == 200
     assert len(list_resp.json()) == 2
@@ -393,6 +414,93 @@ async def test_admin_user_management_endpoints(monkeypatch: pytest.MonkeyPatch) 
     assert detail_resp.json()["email"] == "researcher@example.com"
     assert update_resp.status_code == 200
     assert update_resp.json()["is_active"] is False
+    assert role_resp.status_code == 200
+    assert role_resp.json()["role"] == "admin"
+    assert invalid_role_resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_can_view_user_chat_experience_read_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin = make_user(role="admin")
+    researcher = make_user()
+    researcher.id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    message_id = uuid.uuid4()
+    session = SimpleNamespace(
+        id=session_id,
+        user_id=researcher.id,
+        mode="researcher",
+        title="Viewed session",
+        created_at=_now(),
+        updated_at=_now(),
+    )
+    message = SimpleNamespace(
+        id=message_id,
+        session_id=session_id,
+        role="user",
+        content="Show me exactly what I asked.",
+        sources=None,
+        llm_model=None,
+        prompt_tokens=None,
+        completion_tokens=None,
+        latency_ms=None,
+        created_at=_now(),
+    )
+
+    async def fake_get_user_by_id(_db, user_id):
+        if user_id == researcher.id:
+            return researcher
+        if user_id == admin.id:
+            return admin
+        return None
+
+    async def fake_get_sessions_for_user(_db, user_id):
+        return [session] if user_id == researcher.id else []
+
+    async def fake_get_session(_db, requested_session_id):
+        return session if requested_session_id == session_id else None
+
+    async def fake_get_messages_for_session(_db, requested_session_id=None, **kwargs):
+        requested_session_id = requested_session_id or kwargs.get("session_id")
+        return [message] if requested_session_id == session_id else []
+
+    monkeypatch.setattr("app.api.routes.admin.crud.get_user_by_id", fake_get_user_by_id)
+    monkeypatch.setattr(
+        "app.api.routes.admin.crud.get_sessions_for_user",
+        fake_get_sessions_for_user,
+    )
+    monkeypatch.setattr("app.api.routes.admin.crud.get_session", fake_get_session)
+    monkeypatch.setattr(
+        "app.api.routes.admin.crud.get_messages_for_session",
+        fake_get_messages_for_session,
+    )
+
+    async with _make_client(admin) as (c, _u, _db):
+        sessions_resp = await c.get(f"/api/v1/admin/users/{researcher.id}/chat/sessions")
+        session_resp = await c.get(
+            f"/api/v1/admin/users/{researcher.id}/chat/sessions/{session_id}"
+        )
+        create_resp = await c.post(
+            f"/api/v1/admin/users/{researcher.id}/chat/sessions",
+            json={"mode": "researcher"},
+        )
+        patch_resp = await c.patch(
+            f"/api/v1/admin/users/{researcher.id}/chat/sessions/{session_id}",
+            json={"title": "Changed"},
+        )
+        delete_resp = await c.delete(
+            f"/api/v1/admin/users/{researcher.id}/chat/sessions/{session_id}"
+        )
+
+    assert sessions_resp.status_code == 200
+    assert sessions_resp.json()[0]["title"] == "Viewed session"
+    assert session_resp.status_code == 200
+    assert session_resp.json()["messages"][0]["content"] == "Show me exactly what I asked."
+    assert create_resp.status_code == 405
+    assert patch_resp.status_code == 405
+    assert delete_resp.status_code == 405
 
 
 # ── Feedback ──────────────────────────────────────────────────────────────────

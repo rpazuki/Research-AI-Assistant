@@ -23,6 +23,7 @@ from app.schemas.admin import (
     UserUsageSummary,
     UserAdminUpdate,
 )
+from app.schemas.chat import ChatMessageResponse, ChatSessionResponse, ChatSessionWithMessages
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -48,6 +49,41 @@ async def get_admin_user(
     return _build_admin_user_summary(user=user, usage=usage_by_user.get(user.id, {}))
 
 
+@router.get("/users/{user_id}/chat/sessions", response_model=list[ChatSessionResponse])
+async def list_admin_user_chat_sessions(
+    user_id: uuid.UUID, _admin: AdminUser, db: DBSession
+) -> list[ChatSessionResponse]:
+    user = await _get_user_or_404(db, user_id)
+    sessions = await crud.get_sessions_for_user(db, user_id=user.id)
+    return [ChatSessionResponse.model_validate(session) for session in sessions]
+
+
+@router.get(
+    "/users/{user_id}/chat/sessions/{session_id}",
+    response_model=ChatSessionWithMessages,
+)
+async def get_admin_user_chat_session(
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    _admin: AdminUser,
+    db: DBSession,
+) -> ChatSessionWithMessages:
+    user = await _get_user_or_404(db, user_id)
+    session = await crud.get_session(db, session_id)
+    if session is None or session.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    messages = await crud.get_messages_for_session(db, session_id=session.id)
+    return ChatSessionWithMessages(
+        id=session.id,
+        user_id=session.user_id,
+        title=session.title,
+        mode=session.mode,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+        messages=[ChatMessageResponse.model_validate(message) for message in messages],
+    )
+
+
 @router.patch("/users/{user_id}", response_model=AdminUserSummary)
 async def update_admin_user_status(
     user_id: uuid.UUID,
@@ -65,6 +101,8 @@ async def update_admin_user_status(
         updated_user = await crud.update_user_token_limit(
             db, user=updated_user, token_limit=body.token_limit
         )
+    if body.role is not None:
+        updated_user = await crud.update_user_role(db, user=updated_user, role=body.role)
     usage_by_user = await crud.get_usage_by_user(db, [updated_user.id])
     return _build_admin_user_summary(
         user=updated_user, usage=usage_by_user.get(updated_user.id, {})
@@ -138,6 +176,13 @@ def _render_invitation_template(template: str, *, email: str, invite_link: str) 
         .replace("{email}", email)
         .replace("{app_name}", settings.app_name)
     )
+
+
+async def _get_user_or_404(db: DBSession, user_id: uuid.UUID) -> User:
+    user = await crud.get_user_by_id(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
 
 
 def _build_admin_user_summary(user: User, usage: dict | None = None) -> AdminUserSummary:

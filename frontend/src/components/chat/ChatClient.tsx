@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useRouter } from "next/navigation";
@@ -10,14 +11,16 @@ import remarkGfm from "remark-gfm";
 import {
   createSession,
   deleteSession,
+  getAdminUserSession,
   getChatQuota,
   getSession,
+  listAdminUserSessions,
   listSessions,
   logout,
   streamMessage,
   updateSessionTitle,
 } from "@/lib/api";
-import type { ChatMessage, ChatQuota, Source } from "@/types";
+import type { ChatMessage, ChatQuota, ChatSession, Source } from "@/types";
 
 interface Message {
   id: string;
@@ -27,12 +30,7 @@ interface Message {
   streaming?: boolean;
 }
 
-interface SessionSummary {
-  id: string;
-  title: string | null;
-  mode: string;
-  updated_at: string;
-}
+type SessionSummary = Pick<ChatSession, "id" | "title" | "mode" | "updated_at">;
 
 interface SessionContextMenuState {
   x: number;
@@ -62,10 +60,19 @@ function toUiMessage(message: ChatMessage): Message {
 
 export default function ChatClient({
   initialSessionId,
+  adminUserId,
+  readOnly = false,
+  readOnlyLabel = "Read-only admin view",
+  backHref = "/admin",
 }: {
   initialSessionId?: string;
+  adminUserId?: string;
+  readOnly?: boolean;
+  readOnlyLabel?: string;
+  backHref?: string;
 }) {
   const router = useRouter();
+  const isReadOnly = readOnly || Boolean(adminUserId);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId ?? null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -94,17 +101,20 @@ export default function ChatClient({
 
   useEffect(() => {
     void loadSessions();
-    void loadQuota();
-  }, []);
+    if (!isReadOnly) {
+      void loadQuota();
+    }
+  }, [adminUserId, isReadOnly]);
 
   useEffect(() => {
     if (!initialSessionId) {
+      setActiveSessionId(null);
       setMessages([]);
       setActiveSources([]);
       return;
     }
     void loadSession(initialSessionId);
-  }, [initialSessionId]);
+  }, [adminUserId, initialSessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -178,7 +188,7 @@ export default function ChatClient({
 
   async function loadSessions() {
     try {
-      const data = await listSessions();
+      const data = adminUserId ? await listAdminUserSessions(adminUserId) : await listSessions();
       setSessions(data);
     } catch (err) {
       if (err instanceof Error && err.message === "Unauthorized") {
@@ -190,6 +200,10 @@ export default function ChatClient({
   }
 
   async function loadQuota() {
+    if (isReadOnly) {
+      return;
+    }
+
     try {
       const data = await getChatQuota();
       setQuota(data);
@@ -220,7 +234,9 @@ export default function ChatClient({
 
   async function loadSession(sessionId: string) {
     try {
-      const session = await getSession(sessionId);
+      const session = adminUserId
+        ? await getAdminUserSession(adminUserId, sessionId)
+        : await getSession(sessionId);
       setActiveSessionId(session.id);
       setMode((session.mode as "researcher" | "lab_manager") ?? "researcher");
       const nextMessages = session.messages.map(toUiMessage);
@@ -244,6 +260,10 @@ export default function ChatClient({
   }
 
   async function handleNewChat() {
+    if (isReadOnly) {
+      return;
+    }
+
     if (quota?.token_limit_reached) {
       return;
     }
@@ -255,7 +275,7 @@ export default function ChatClient({
       setActiveSources([]);
       setError(null);
       await loadSessions();
-      router.push(`/chat/${session.id}`);
+      router.push(getSessionHref(session.id));
     } catch (err) {
       applyTokenLimitError(err);
       setError(err instanceof Error ? err.message : "Failed to create session");
@@ -263,13 +283,17 @@ export default function ChatClient({
   }
 
   function handleSelectSession(sessionId: string) {
-    router.push(`/chat/${sessionId}`);
+    router.push(getSessionHref(sessionId));
   }
 
   function handleSessionContextMenu(
     event: ReactMouseEvent<HTMLButtonElement>,
     session: SessionSummary
   ) {
+    if (isReadOnly) {
+      return;
+    }
+
     event.preventDefault();
     setContextMenu({ x: event.clientX, y: event.clientY, session });
   }
@@ -286,6 +310,10 @@ export default function ChatClient({
   }
 
   async function handleSaveTitle(sessionId: string, rawTitle?: string) {
+    if (isReadOnly) {
+      return;
+    }
+
     if (isSavingTitle) {
       return;
     }
@@ -315,6 +343,10 @@ export default function ChatClient({
   }
 
   async function handleDeleteSession(sessionId: string) {
+    if (isReadOnly) {
+      return;
+    }
+
     if (isDeletingSession) {
       return;
     }
@@ -339,7 +371,7 @@ export default function ChatClient({
         if (remaining.length > 0) {
           const nextSessionId = remaining[0].id;
           setActiveSessionId(nextSessionId);
-          router.push(`/chat/${nextSessionId}`);
+          router.push(getSessionHref(nextSessionId));
         } else {
           setActiveSessionId(null);
           setMessages([]);
@@ -356,6 +388,10 @@ export default function ChatClient({
   }
 
   async function handleSend() {
+    if (isReadOnly) {
+      return;
+    }
+
     if (!input.trim() || isStreaming || quota?.token_limit_reached) {
       return;
     }
@@ -366,7 +402,7 @@ export default function ChatClient({
         const session = await createSession(mode);
         sessionId = session.id;
         setActiveSessionId(sessionId);
-        router.push(`/chat/${sessionId}`);
+        router.push(getSessionHref(sessionId));
       } catch (err) {
         applyTokenLimitError(err);
         setError(err instanceof Error ? err.message : "Failed to create session");
@@ -465,6 +501,12 @@ export default function ChatClient({
     }
   }
 
+  function getSessionHref(sessionId: string) {
+    return adminUserId
+      ? `/admin/users/${adminUserId}/experience/${sessionId}`
+      : `/chat/${sessionId}`;
+  }
+
   return (
     <div ref={containerRef} className="flex h-screen bg-gray-50 overflow-hidden">
       {/* Left sidebar - chat list */}
@@ -484,14 +526,23 @@ export default function ChatClient({
                 <p className="text-xs text-gray-500">Research Literature Assistant</p>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={handleLogout}
+            {isReadOnly ? (
+              <Link
+                href={backHref}
                 className="text-xs text-gray-500 hover:text-gray-800 transition"
               >
-                Sign out
-              </button>
-            </div>
+                Back
+              </Link>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  onClick={handleLogout}
+                  className="text-xs text-gray-500 hover:text-gray-800 transition"
+                >
+                  Sign out
+                </button>
+              </div>
+            )}
           </div>
           <div className="p-3">
             {quota?.token_limit_reached && (
@@ -502,7 +553,7 @@ export default function ChatClient({
             )}
             <button
               onClick={handleNewChat}
-              disabled={quota?.token_limit_reached}
+              disabled={isReadOnly || quota?.token_limit_reached}
               className="w-full rounded-lg bg-blue-600 text-white text-sm py-2 font-medium hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 transition"
             >
               + New Chat
@@ -567,17 +618,20 @@ export default function ChatClient({
             <select
               value={mode}
               onChange={(e) => setMode(e.target.value as "researcher" | "lab_manager")}
-              className="w-full rounded-lg border border-gray-300 text-xs px-2 py-1 bg-white"
+              disabled={isReadOnly}
+              className="w-full rounded-lg border border-gray-300 text-xs px-2 py-1 bg-white disabled:opacity-60"
             >
               <option value="researcher">Researcher mode</option>
               <option value="lab_manager">Lab Manager mode</option>
             </select>
-            <button
-              onClick={() => router.push("/analytics")}
-              className="w-full rounded-lg border border-gray-300 text-sm py-2 text-gray-700 hover:bg-gray-100 transition"
-            >
-              Analytics
-            </button>
+            {!isReadOnly && (
+              <button
+                onClick={() => router.push("/analytics")}
+                className="w-full rounded-lg border border-gray-300 text-sm py-2 text-gray-700 hover:bg-gray-100 transition"
+              >
+                Analytics
+              </button>
+            )}
           </div>
         </aside>
       )}
@@ -606,6 +660,14 @@ export default function ChatClient({
               </button>
             )}
           </div>
+          {isReadOnly && (
+            <div
+              className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800"
+              role="status"
+            >
+              {readOnlyLabel}
+            </div>
+          )}
           <div>
             {activeSources.length > 0 && !rightSidebarVisible && (
               <button
@@ -679,9 +741,11 @@ export default function ChatClient({
                   void handleSend();
                 }
               }}
-              disabled={isStreaming || quota?.token_limit_reached}
+              disabled={isReadOnly || isStreaming || quota?.token_limit_reached}
               placeholder={
-                quota?.token_limit_reached
+                isReadOnly
+                  ? "Read-only admin view"
+                  : quota?.token_limit_reached
                   ? "Token limit reached"
                   : "e.g. What are the key metabolic pathways for lipid accumulation in Y. lipolytica?"
               }
@@ -689,7 +753,7 @@ export default function ChatClient({
             />
             <button
               onClick={() => void handleSend()}
-              disabled={isStreaming || !input.trim() || quota?.token_limit_reached}
+              disabled={isReadOnly || isStreaming || !input.trim() || quota?.token_limit_reached}
               className="rounded-xl bg-blue-600 text-white px-5 py-2 text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 transition"
             >
               {isStreaming ? "..." : "Send"}
