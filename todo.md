@@ -24,3 +24,33 @@
 - [x] 8. Change users roles.
   - Proposed date: 2026-05-21
   - Finish date: 2026-05-21
+- [ ] 9. Add durable corpus cache layout and manifest schema.
+  - Proposed date: 2026-05-21
+  - Finish date: NA
+- [ ] 10. Cache PubMed raw XML and normalized documents before indexing.
+  - Proposed date: 2026-05-21
+  - Finish date: NA
+- [ ] 11. Add local re-indexing from cached JSONL/XML/PDF assets.
+  - Proposed date: 2026-05-21
+  - Finish date: NA
+- [ ] 12. Persist PDF extraction outputs and OCR-ready metadata.
+  - Proposed date: 2026-05-21
+  - Finish date: NA
+- [ ] 13. Wire PMC full-text ingestion into the main index builder.
+  - Proposed date: 2026-05-21
+  - Finish date: NA
+- [ ] 14. Add DOI/PMCID full-text discovery and acquisition queue.
+  - Proposed date: 2026-05-21
+  - Finish date: NA
+- [ ] 15. Add licensed Imperial/library full-text acquisition workflow.
+  - Proposed date: 2026-05-21
+  - Finish date: NA
+- [ ] 16. Add provenance, license, checksum, and access-status tracking.
+  - Proposed date: 2026-05-21
+  - Finish date: NA
+- [ ] 17. Add ingestion adapters for lab protocols, ELN/LIMS, inventories, and omics summaries.
+  - Proposed date: 2026-05-21
+  - Finish date: NA
+- [ ] 18. Add ingestion tests and transfer/redo acceptance checks.
+  - Proposed date: 2026-05-21
+  - Finish date: NA
