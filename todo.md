@@ -24,24 +24,24 @@
 - [x] 8. Change users roles.
   - Proposed date: 2026-05-21
   - Finish date: 2026-05-21
-- [ ] 9. Add durable corpus cache layout and manifest schema.
+- [x] 9. Add durable corpus cache layout and manifest schema.
   - Proposed date: 2026-05-21
-  - Finish date: NA
-- [ ] 10. Cache PubMed raw XML and normalized documents before indexing.
+  - Finish date: 2026-05-23
+- [x] 10. Cache PubMed raw XML and normalized documents before indexing.
   - Proposed date: 2026-05-21
-  - Finish date: NA
-- [ ] 11. Add local re-indexing from cached JSONL/XML/PDF assets.
+  - Finish date: 2026-05-23
+- [x] 11. Add local re-indexing from cached JSONL/XML/PDF assets.
   - Proposed date: 2026-05-21
-  - Finish date: NA
-- [ ] 12. Persist PDF extraction outputs and OCR-ready metadata.
+  - Finish date: 2026-05-23
+- [x] 12. Persist PDF extraction outputs and OCR-ready metadata.
   - Proposed date: 2026-05-21
-  - Finish date: NA
-- [ ] 13. Wire PMC full-text ingestion into the main index builder.
+  - Finish date: 2026-05-23
+- [x] 13. Wire PMC full-text ingestion into the main index builder.
   - Proposed date: 2026-05-21
-  - Finish date: NA
-- [ ] 14. Add DOI/PMCID full-text discovery and acquisition queue.
+  - Finish date: 2026-05-23
+- [x] 14. Add DOI/PMCID full-text discovery and acquisition queue.
   - Proposed date: 2026-05-21
-  - Finish date: NA
+  - Finish date: 2026-05-23
 - [ ] 15. Add licensed Imperial/library full-text acquisition workflow.
   - Proposed date: 2026-05-21
   - Finish date: NA
@@ -53,4 +53,475 @@
   - Finish date: NA
 - [ ] 18. Add ingestion tests and transfer/redo acceptance checks.
   - Proposed date: 2026-05-21
+  - Finish date: NA
+- [ ] 19. Treat evaluation as a formal release gate before internal beta.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 20. Add an evaluation implementation plan document.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 21. Expand the evaluation question schema with domain_fit, expected_behavior, gold answer outline, full-text requirement, and review status.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 22. Add expected PMIDs to all retrieval-scored seed questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 23. Add expected DOIs to benchmark questions where DOI labels are easier or more stable than PMID labels.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 24. Add gold answer outlines for all factual, methodology, review, and citation-stress questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 25. Add expected refusal wording and refusal reasons for all out-of-scope questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 26. Add supporting evidence notes or snippets for gold papers where experts identify decisive passages.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 27. Add requires_full_text labels to questions that cannot be answered reliably from abstracts.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 28. Add expert_owner and reviewer confidence fields to benchmark records.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 29. Decide whether to keep labels in questions.jsonl or split them into evaluation/benchmark/labels.jsonl.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 30. Create labels.jsonl if labels become too large or sensitive for questions.jsonl.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 31. Add schema validation for evaluation benchmark records.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 32. Add tests that fail when retrieval-scored questions have no expected_pmids or expected_dois.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 33. Add tests that fail when out-of-scope questions do not define expected_behavior=refuse.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 34. Build a structured expert review workflow for evaluation questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 35. Convert the expert question review document into a spreadsheet-friendly CSV export.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 36. Add an import process to merge expert-reviewed question labels back into JSONL.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 37. Assign expert reviewers for core Y. lipolytica, lipid engineering, fermentation, modelling, and sustainable protein questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 38. Add a second-review process for a representative subset of benchmark questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 39. Add review_status lifecycle values for draft, expert_review_needed, expert_reviewed, label_complete, and retired questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 40. Expand the benchmark from 20 seed questions to at least 70 expert-reviewed questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 41. Add at least 20 core factual questions for the RLA Lab domain.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 42. Add at least 10 adjacent-domain factual questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 43. Add at least 15 review or synthesis questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 44. Add at least 10 methodology questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 45. Add at least 10 out-of-scope or refusal questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 46. Add at least 5 citation-stress or false-premise questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 47. Add benchmark questions tied to known lab papers and landmark domain papers.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 48. Add benchmark questions that specifically require full-text methods or supplementary material.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 49. Add benchmark questions collected from real beta-user queries.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 50. Expand the mature benchmark target to 150-200 questions after beta feedback.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 51. Add topic coverage checks for Y. lipolytica lipid accumulation, TAG synthesis, acetyl-CoA supply, CRISPR, fermentation, modelling, carotenoids, omega-3 production, consortia, sustainable protein, biosafety, and lipid droplets.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 52. Add a corpus coverage audit that checks gold PMIDs and DOIs against the documents table before retrieval scoring.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 53. Tag evaluation failures as corpus coverage, retrieval, generation, citation, refusal, latency, or benchmark-label failures.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 54. Add corpus-gap reports for missing gold documents.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 55. Use coverage audit results to identify where PubMed query expansion is needed.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 56. Use coverage audit results to identify where PMC or licensed full-text ingestion is needed.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 57. Update evaluation/run_eval.py to report Recall@20.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 58. Update evaluation/run_eval.py to warn or fail when no questions are scoreable.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 59. Add a --fail-on-empty option to evaluation/run_eval.py.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 60. Add --category and --difficulty filters to evaluation/run_eval.py.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 61. Add a --limit option for smoke-test evaluation runs.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 62. Add --output-format json, jsonl, markdown, and csv support to evaluation/run_eval.py.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 63. Add --cleanup-session support for RAG evaluation sessions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 64. Save exact question snapshots inside every evaluation report.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 65. Record corpus manifest id, corpus name, document count, and chunk count in every evaluation report.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 66. Record embedding model, chunk size, chunk overlap, retrieval settings, reranker settings, LLM provider, LLM model, and prompt version in every evaluation report.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 67. Record git commit and evaluation runner version in every evaluation report.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 68. Add machine-readable error records for failed evaluation requests.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 69. Add retrieval comparison modes for hybrid, vector-only, lexical-only, and reranked search.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 70. Add retrieval metrics for Precision@k when multiple gold documents are available.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 71. Add coverage-adjusted retrieval metrics that exclude missing-gold-document corpus failures.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 72. Compare abstract-only retrieval against full-text-enhanced retrieval once full text is ingested.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 73. Compare retrieval quality across chunk size and chunk overlap settings.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 74. Compare PubMedBERT and MiniLM retrieval once multi-dimension embedding support exists.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 75. Add reviewer-facing Markdown export for RAG answers.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 76. Add reviewer-facing CSV export for RAG answer scoring.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 77. Add human scoring fields for correctness, completeness, citation support, grounding, usefulness, refusal behavior, and reviewer notes.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 78. Add a scoring rubric document for expert answer review.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 79. Add inter-rater review and disagreement-resolution process for expert scoring.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 80. Add automatic checks that final answer citations appear in returned source metadata.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 81. Add automatic checks for cited PMIDs and DOIs that were not retrieved.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 82. Add citation faithfulness review workflow for expert validation of cited claims.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 83. Add hallucination flags for claims not supported by retrieved context.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 84. Add explicit evaluation of out-of-scope refusal behavior.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 85. Add false-premise correction evaluation cases and scoring.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 86. Add prompt-injection and fabricated-citation stress questions to the benchmark.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 87. Add latency metrics for retrieval latency, embedding latency, time to first token, total response time, and source-return timing.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 88. Add concurrent-user performance evaluation for at least 10 simultaneous users.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 89. Add timeout and failure-rate reporting to evaluation outputs.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 90. Add regression comparison between two evaluation report files.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 91. Add an evaluation summary log that tracks results across runs.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 92. Add Markdown summary reports for each evaluation run.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 93. Add release-gate thresholds for retrieval, citation faithfulness, refusal behavior, and latency.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 94. Add a CI smoke test for evaluation runner mechanics using mocked backend responses.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 95. Add regression gates that prevent empty or label-incomplete benchmark runs from passing.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 96. Add decision records for retrieval, corpus, prompt, or model changes driven by evaluation results.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 97. Add remediation mapping from each evaluation failure category to engineering follow-up actions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 98. Add documentation for running retrieval evaluation after ingestion.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 99. Add documentation for running full RAG evaluation and preparing expert scoring exports.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 100. Add documentation for interpreting evaluation reports and deciding next remediation steps.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 101. Add an evaluation workflow UI plan document.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 102. Decide whether to add an evaluator role or use assignment-based reviewer permissions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 103. Extend user role handling if an evaluator role is adopted.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 104. Add evaluation_question_sets table and migration.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 105. Add evaluation_questions table and migration.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 106. Add evaluation_runs table and migration.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 107. Add evaluation_run_results table and migration.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 108. Add evaluation_review_assignments table and migration.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 109. Add evaluation_reviews table and migration.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 110. Add evaluation_run_comparisons table and migration.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 111. Add evaluation_audit_events table for important evaluation workflow actions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 112. Add SQLAlchemy models and relationships for evaluation tables.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 113. Add Pydantic schemas for question sets, questions, runs, results, assignments, reviews, and comparisons.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 114. Add CRUD helpers for evaluation question sets and questions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 115. Add CRUD helpers for evaluation runs and run results.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 116. Add CRUD helpers for evaluation review assignments and reviews.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 117. Add admin API endpoints for evaluation question-set CRUD.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 118. Add admin API endpoints for evaluation question CRUD.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 119. Add admin API endpoints for importing questions from JSONL.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 120. Add admin API endpoints for exporting question sets to JSONL and CSV.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 121. Add admin API endpoints for evaluation run list, creation, detail, cancellation, and export.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 122. Add admin API endpoints for evaluation run results list and result detail.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 123. Add admin API endpoints for assigning run results to expert reviewers.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 124. Add reviewer API endpoints for personal review queue, draft save, and review submission.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 125. Add admin API endpoints for accepting, returning, and reassigning expert reviews.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 126. Add admin API endpoints for comparing two evaluation runs.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 127. Add backend evaluation service module for run execution, metrics, coverage audit, reports, and comparisons.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 128. Refactor evaluation/run_eval.py to share metric and report logic with backend evaluation services.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 129. Add support for importing existing questions.jsonl into a database-backed draft question set.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 130. Add support for importing CLI-generated evaluation report files into database run records.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 131. Add evaluation run status lifecycle: queued, running, completed, failed, and cancelled.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 132. Decide whether first UI-triggered evaluation runs should execute synchronously, as FastAPI background tasks, or through a worker queue.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 133. Add background execution support for longer evaluation runs.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 134. Snapshot questions and run configuration at evaluation run start.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 135. Persist retrieval evaluation outputs into evaluation_run_results.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 136. Persist RAG evaluation outputs into evaluation_run_results.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 137. Persist retrieved sources, returned sources, retrieved chunk ids, generated answer text, and latency fields per evaluation result.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 138. Persist automatic coverage status for gold PMIDs and DOIs per evaluation result.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 139. Persist automatic citation checks per evaluation result.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 140. Add frontend types and API client functions for evaluation workflow endpoints.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 141. Add /admin/evaluation overview dashboard.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 142. Add /admin/evaluation/questions question-bank page.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 143. Add question filters by set, category, difficulty, review status, expected behavior, domain fit, and full-text requirement.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 144. Add question add, edit, duplicate, archive, import, export, and validation UI.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 145. Add /admin/evaluation/questions/[questionId] question editor page.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 146. Add UI warnings for missing gold PMIDs, missing answer outlines, missing refusal policy, and missing full-text tags.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 147. Add /admin/evaluation/runs evaluation run list page.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 148. Add /admin/evaluation/runs/new start-run form.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 149. Add run filters by mode, status, question set, corpus manifest, embedding model, and LLM model.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 150. Add /admin/evaluation/runs/[runId] run summary page.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 151. Add run summary panels for configuration, corpus state, metrics, failures, latency, artifacts, and reviewer progress.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 152. Add /admin/evaluation/runs/[runId]/results result table page.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 153. Add result filters by category, difficulty, coverage status, failure category, review status, and reviewer.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 154. Add /admin/evaluation/runs/[runId]/results/[resultId] result detail page.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 155. Show question, expected behavior, gold answer outline, gold PMIDs/DOIs, retrieved sources, generated answer, returned sources, automatic checks, and metrics on result detail.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 156. Add assignment controls on run result pages.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 157. Add /admin/evaluation/assignments assignment management page.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 158. Add /evaluation/reviews reviewer queue page.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 159. Add /evaluation/reviews/[assignmentId] expert review form page.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 160. Add review form fields for correctness, completeness, citation support, grounding, usefulness, refusal behavior, false-premise handling, issue flags, confidence, comments, and suggested answer.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 161. Add draft save and final submit behavior for expert reviews.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 162. Add reviewer access controls so users can see only assigned reviews unless they are admins.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 163. Add admin access controls for evaluation management pages.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 164. Add audit logging for question changes, run lifecycle changes, assignment changes, review submissions, baseline changes, and release decisions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 165. Add run comparison UI under /admin/evaluation/comparisons.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 166. Add baseline-run selection and candidate-run comparison workflow.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 167. Add release-gate status UI that summarizes whether a run is acceptable for beta or production.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 168. Add Markdown, JSON, JSONL, and CSV export buttons for runs and expert-review results.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 169. Add backend tests for evaluation question CRUD, import/export, validation, and permissions.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 170. Add backend tests for run creation, status transitions, result persistence, coverage audit, assignment, review submission, and run comparison.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 171. Add frontend tests for question bank, run list, run detail, result detail, assignment management, reviewer queue, and review form.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 172. Add end-to-end test covering import questions, run retrieval evaluation, assign expert review, submit review, and update run summary.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 173. Document the evaluation UI workflow for admins and expert reviewers.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 174. Document how UI-triggered runs relate to evaluation/run_eval.py and report files.
+  - Proposed date: 2026-05-23
+  - Finish date: NA
+- [ ] 175. Add a first implementation slice for DB-backed question bank, DB-backed retrieval run records, result detail, assignment, and expert review form.
+  - Proposed date: 2026-05-23
   - Finish date: NA

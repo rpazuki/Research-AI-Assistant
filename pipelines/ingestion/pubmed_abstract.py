@@ -18,6 +18,7 @@ Usage:
 """
 
 import calendar
+import io
 import json
 import os
 import time
@@ -29,6 +30,7 @@ from pathlib import Path
 from Bio import Entrez
 
 from pipelines.ingestion.base import BaseIngester
+from pipelines.corpus_cache import CorpusCache, PARSER_VERSIONS
 from pipelines.processing.normalizer import AuthorRecord, NormalizedDocument
 
 import logging
@@ -52,6 +54,7 @@ class PubMedAbstractIngester(BaseIngester):
         sleep_s: float = 0.15,
         checkpoint_dir: str = "./data/checkpoints",
         incremental_from: date | None = None,
+        cache: CorpusCache | None = None,
     ) -> None:
         self.query = query
         self.year_from = year_from
@@ -61,12 +64,18 @@ class PubMedAbstractIngester(BaseIngester):
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.incremental_from = incremental_from
+        self.cache = cache
 
         Entrez.email = email
         Entrez.api_key = api_key
 
     @classmethod
-    def from_config(cls, config_path: str, incremental_from: date | None = None) -> "PubMedAbstractIngester":
+    def from_config(
+        cls,
+        config_path: str,
+        incremental_from: date | None = None,
+        cache: CorpusCache | None = None,
+    ) -> "PubMedAbstractIngester":
         """Instantiate from a TOML config file."""
         try:
             import tomllib
@@ -86,6 +95,7 @@ class PubMedAbstractIngester(BaseIngester):
             batch_size=pm.get("batch_size", 20),
             sleep_s=pm.get("sleep_between_batches_s", 0.15),
             incremental_from=incremental_from,
+            cache=cache,
         )
 
     def get_config_summary(self) -> dict:
@@ -111,18 +121,38 @@ class PubMedAbstractIngester(BaseIngester):
                 unique_pmids.append(pmid)
         logger.info(f"Unique PMIDs after dedup: {len(unique_pmids)}")
 
+        raw_count = 0
+        normalized_count = 0
         for start in range(0, len(unique_pmids), self.batch_size):
             batch = unique_pmids[start : start + self.batch_size]
             logger.info(f"Fetching metadata: {start}–{start + len(batch)}")
             try:
-                records = self._safe_efetch(batch)
+                batch_number = start // self.batch_size + 1
+                raw_xml, raw_asset_path = self._get_or_fetch_batch_xml(batch, batch_number)
+                raw_count += 1
+                records = self.parse_efetch_xml(raw_xml)
                 for article_record in records.get("PubmedArticle", []):
                     doc = self._parse_article(article_record)
                     if doc is not None:
+                        normalized_count += 1
+                        if self.cache is not None:
+                            self.cache.write_document(
+                                doc,
+                                raw_asset_path=raw_asset_path,
+                                access_status="metadata-only",
+                                parser_version=PARSER_VERSIONS["pubmed"],
+                            )
                         yield doc
             except Exception as exc:
                 logger.error(f"Failed batch {start}: {exc}")
             time.sleep(self.sleep_s)
+
+        if self.cache is not None:
+            self.cache.update_counts(
+                pmids=len(unique_pmids),
+                raw_records=raw_count,
+                normalized_documents=normalized_count,
+            )
 
     def _collect_pmids(self) -> list[str]:
         """Collect all PMIDs for the configured query, splitting by year.
@@ -163,6 +193,8 @@ class PubMedAbstractIngester(BaseIngester):
             # Checkpoint
             with open(checkpoint_file, "w") as f:
                 json.dump(year_pmids, f)
+            if self.cache is not None:
+                self.cache.write_json(f"raw/pubmed/esearch/pmids_{year}.json", {"pmids": year_pmids})
             all_pmids.extend(year_pmids)
 
         return all_pmids
@@ -238,19 +270,53 @@ class PubMedAbstractIngester(BaseIngester):
 
     def _safe_efetch(self, id_list: list[str]) -> dict:
         """Entrez efetch with retry."""
+        return self.parse_efetch_xml(self._safe_efetch_xml(id_list))
+
+    def _safe_efetch_xml(self, id_list: list[str]) -> str:
+        """Entrez efetch with retry, returning the raw XML payload."""
         max_retries = 5
         for attempt in range(max_retries):
             try:
                 handle = Entrez.efetch(db="pubmed", id=id_list, retmode="xml")
-                records = Entrez.read(handle)
+                raw = handle.read()
                 handle.close()
-                return records
+                return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
             except (IncompleteRead, RemoteDisconnected, OSError) as exc:
                 logger.warning(f"efetch attempt {attempt+1}/{max_retries}: {exc}")
                 time.sleep(2 ** attempt)
         raise RuntimeError("efetch failed after retries")
 
-    def _parse_article(self, article: dict) -> NormalizedDocument | None:
+    @staticmethod
+    def parse_efetch_xml(xml_text: str) -> dict:
+        """Parse a raw PubMed efetch XML payload into Biopython records."""
+        return Entrez.read(io.BytesIO(xml_text.encode("utf-8")))
+
+    def _get_or_fetch_batch_xml(self, id_list: list[str], batch_number: int) -> tuple[str, str | None]:
+        """Load cached efetch XML for a batch or fetch and cache it."""
+        if self.cache is None:
+            return self._safe_efetch_xml(id_list), None
+
+        relative_path = f"raw/pubmed/efetch/batch_{batch_number:06d}.xml"
+        path = self.cache.root / relative_path
+        if path.exists():
+            logger.info(f"Using cached PubMed efetch XML: {relative_path}")
+            return path.read_text(), relative_path
+
+        xml_text = self._safe_efetch_xml(id_list)
+        self.cache.write_bytes(relative_path, xml_text.encode("utf-8"))
+        self.cache.record_asset(
+            document_id=None,
+            asset_type="pubmed_xml",
+            relative_path=relative_path,
+            source_url="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+            access_status="metadata-only",
+            license="metadata-only",
+            terms_note="NCBI PubMed metadata",
+        )
+        return xml_text, relative_path
+
+    @staticmethod
+    def _parse_article(article: dict) -> NormalizedDocument | None:
         """Parse a single PubmedArticle record into NormalizedDocument."""
         try:
             medline = article["MedlineCitation"]

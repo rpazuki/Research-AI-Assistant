@@ -29,6 +29,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
+from pipelines.corpus_cache import CorpusCache, PARSER_VERSIONS
 from pipelines.ingestion.base import BaseIngester
 from pipelines.processing.normalizer import AuthorRecord
 from pipelines.processing.normalizer import NormalizedDocument
@@ -172,9 +173,11 @@ class PMCFullTextIngester(BaseIngester):
         self,
         pmc_ids: list[str],
         sleep_s: float = 0.5,
+        cache: CorpusCache | None = None,
     ) -> None:
         self.pmc_ids = pmc_ids
         self.sleep_s = sleep_s
+        self.cache = cache
 
     def get_config_summary(self) -> dict:
         return {
@@ -194,6 +197,13 @@ class PMCFullTextIngester(BaseIngester):
             try:
                 doc = self._fetch_one(pmc_id)
                 if doc is not None:
+                    if self.cache is not None:
+                        self.cache.write_document(
+                            doc,
+                            raw_asset_path=f"raw/pmc/xml/{self._safe_pmc_id(pmc_id)}.xml",
+                            access_status="open-access",
+                            parser_version=PARSER_VERSIONS["pmc_jats"],
+                        )
                     yield doc
                 time.sleep(self.sleep_s)
             except Exception as exc:
@@ -202,15 +212,39 @@ class PMCFullTextIngester(BaseIngester):
     def _fetch_one(self, pmc_id: str) -> NormalizedDocument | None:
         """Fetch and parse one PMC article."""
         url = f"{PMC_OA_BASE}?verb=GetRecord&identifier=oai:pubmedcentral.nih.gov:{pmc_id.replace('PMC', '')}&metadataPrefix=pmc"
+        safe_pmc_id = self._safe_pmc_id(pmc_id)
+        relative_path = f"raw/pmc/xml/{safe_pmc_id}.xml"
 
-        with httpx.Client(timeout=30) as client:
-            response = client.get(url)
-            response.raise_for_status()
+        if self.cache is not None and (self.cache.root / relative_path).exists():
+            xml_text = (self.cache.root / relative_path).read_text()
+            logger.info(f"Using cached PMC XML: {relative_path}")
+        else:
+            with httpx.Client(timeout=30) as client:
+                response = client.get(url)
+                response.raise_for_status()
+            xml_text = response.text
+            if self.cache is not None:
+                self.cache.write_bytes(relative_path, xml_text.encode("utf-8"))
+                self.cache.record_asset(
+                    document_id=f"pmc:{pmc_id}",
+                    asset_type="pmc_xml",
+                    relative_path=relative_path,
+                    source_url=url,
+                    access_status="open-access",
+                    license="open-access",
+                    terms_note="PMC Open Access XML",
+                    parser_version=PARSER_VERSIONS["pmc_jats"],
+                )
 
-        metadata = _extract_metadata(response.text)
-        full_text = _extract_article_text(response.text)
+        doc = self.parse_xml(xml_text, safe_pmc_id)
+        logger.info(f"Fetched PMC {pmc_id}: {len(xml_text)} chars")
+        return doc
 
-        logger.info(f"Fetched PMC {pmc_id}: {len(response.text)} chars")
+    @staticmethod
+    def parse_xml(xml_text: str, pmc_id: str) -> NormalizedDocument:
+        """Parse cached or freshly fetched PMC JATS XML into a normalized document."""
+        metadata = _extract_metadata(xml_text)
+        full_text = _extract_article_text(xml_text)
 
         return NormalizedDocument(
             document_id=f"pmc:{pmc_id}",
@@ -227,4 +261,9 @@ class PMCFullTextIngester(BaseIngester):
             keywords=metadata["keywords"],
             license=metadata["license"] or "open-access",
             url=f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/",
+            metadata={"access_status": "open-access", "parser_version": PARSER_VERSIONS["pmc_jats"]},
         )
+
+    @staticmethod
+    def _safe_pmc_id(pmc_id: str) -> str:
+        return pmc_id if pmc_id.startswith("PMC") else f"PMC{pmc_id}"
