@@ -51,6 +51,10 @@ Supported implemented values are:
 - `pubmed_abstract`
 - `pmc_fulltext`
 - `pdf`
+- `lab_protocols`
+- `eln_lims`
+- `inventories`
+- `omics_summaries`
 
 ## Cache Layout
 
@@ -64,10 +68,14 @@ data/corpora/<corpus_name>/<run_id>/
   raw/pmc/xml/*.xml
   raw/pdf/originals/*.pdf
   raw/pdf/extracted/*.txt
+  raw/licensed/originals/*
+  raw/lab/originals/*
+  raw/lab/extracted/*.txt
   normalized/documents.jsonl
   normalized/documents.errors.jsonl
   chunks/chunks.jsonl
   assets/asset_manifest.jsonl
+  acquisition/registered_assets.jsonl
   reports/acquisition_queue.jsonl
 ```
 
@@ -237,6 +245,148 @@ Each record separates discovery from acquisition policy. PMCID candidates are
 marked as open-access candidates; DOI candidates require access classification
 before any download workflow.
 
+## Licensed Full-Text Acquisition
+
+Licensed or library-mediated full text is handled by a separate workflow from
+ingestion and indexing. The pipeline does not log in, store credentials, bypass
+access controls, or download paywalled full text. An authorized lab member must
+obtain files through approved Imperial/library routes first, then register the
+local file into the cache.
+
+Export a spreadsheet-friendly queue for manual access review:
+
+```bash
+python -m pipelines.acquisition.fulltext export-review \
+  --cache data/corpora/<corpus_name>/<run_id>
+```
+
+This writes:
+
+```text
+acquisition/review_queue.csv
+```
+
+After an authorized user has legally acquired a file, register the local asset:
+
+```bash
+python -m pipelines.acquisition.fulltext register-asset \
+  --cache data/corpora/<corpus_name>/<run_id> \
+  --file /path/to/downloaded/article.pdf \
+  --document-id pmid:12345678 \
+  --access-method imperial-library \
+  --access-status licensed-access \
+  --source-url https://doi.org/10.1000/example \
+  --license licensed-access \
+  --terms-note "Imperial library access for internal project use" \
+  --acquired-by "authorized lab member"
+```
+
+Allowed access methods are:
+
+- `imperial-library`
+- `imperial-vpn`
+- `shibboleth`
+- `publisher-tdm`
+- `author-provided`
+- `manual-upload`
+
+Registered assets are copied to:
+
+```text
+raw/licensed/originals/<sha256>.<ext>
+```
+
+and recorded in:
+
+```text
+assets/asset_manifest.jsonl
+acquisition/registered_assets.jsonl
+```
+
+Indexing those files is a later local-ingestion step. Keep acquisition review,
+manual download, and indexing as separate operations.
+
+## Provenance And Access Tracking
+
+Cache asset records include:
+
+- checksum: `sha256`
+- byte size
+- source URL or local source path
+- access status
+- license or terms note
+- source system
+- access method
+- sensitivity
+- retention policy
+- owner or steward
+
+Normalized document records also carry cache metadata such as `cache_id`,
+`raw_asset_path`, `access_status`, `parser_version`, `source_system`, and
+`sensitivity`.
+
+Validate a cache before transfer or local-only re-indexing:
+
+```bash
+python -m pipelines.corpus_cache validate \
+  --cache data/corpora/<corpus_name>/<run_id>
+```
+
+The validator checks manifest presence, asset file existence, checksums, and
+known access/sensitivity values.
+
+## Local Lab Data Adapters
+
+The lab-data adapters ingest local exports only. They do not connect to ELN,
+LIMS, inventory systems, cloud storage, or remote services.
+
+### Protocols And SOPs
+
+For Markdown/text protocol files:
+
+```toml
+[corpus]
+source = "lab_protocols"
+
+[lab_protocols]
+dir = "./data/lab_protocols"
+access_status = "internal"
+sensitivity = "internal"
+owner = "RLA Lab"
+```
+
+Then run:
+
+```bash
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/corpus.rlalab.toml
+```
+
+Supported text extensions are `.md`, `.markdown`, and `.txt`.
+
+### ELN/LIMS, Inventories, And Omics Summaries
+
+For local CSV/TSV exports:
+
+```toml
+[corpus]
+source = "inventories"  # or "eln_lims" / "omics_summaries"
+
+[inventories]
+dir = "./data/inventories"
+access_status = "internal"
+sensitivity = "confidential"
+max_rows = 500
+```
+
+Then run the same index command. The adapter preserves the original table under
+`raw/lab/originals/`, writes text summaries under `raw/lab/extracted/`, and
+stores normalized document records with access-control metadata.
+
+Use these adapters for exported summaries, not raw large binary data. For omics
+and sequencing work, ingest QC summaries, result tables, annotations, and
+pathway summaries rather than FASTQ, BAM, or other large raw files.
+
 ## Validation
 
 Run the ingestion-related tests:
@@ -261,10 +411,22 @@ Run lint for the pipeline modules:
 backend/.venv/bin/ruff check pipelines
 ```
 
+Validate transfer/redo behavior:
+
+```bash
+python -m pipelines.corpus_cache validate \
+  --cache data/corpora/<corpus_name>/<run_id>
+
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/corpus.rlalab.toml \
+  --cache data/corpora/<corpus_name>/<run_id> \
+  --local-only
+```
+
 ## Operational Notes
 
 - Keep `data/corpora/` backed up if the corpus needs to be reproducible.
 - Do not commit raw XML, PDFs, extracted text, or generated cache files.
 - Local-only mode should be used for transfer and redo checks.
-- Licensed full-text acquisition is not implemented yet. Do not automate
-  paywalled downloads or store institutional credentials in this project.
+- Keep licensed full-text acquisition separate from ingestion and indexing.
+- Do not automate paywalled downloads or store institutional credentials in this project.

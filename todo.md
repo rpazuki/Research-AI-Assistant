@@ -42,18 +42,18 @@
 - [x] 14. Add DOI/PMCID full-text discovery and acquisition queue.
   - Proposed date: 2026-05-21
   - Finish date: 2026-05-23
-- [ ] 15. Add licensed Imperial/library full-text acquisition workflow.
+- [x] 15. Add licensed Imperial/library full-text acquisition workflow.
   - Proposed date: 2026-05-21
-  - Finish date: NA
-- [ ] 16. Add provenance, license, checksum, and access-status tracking.
+  - Finish date: 2026-05-23
+- [x] 16. Add provenance, license, checksum, and access-status tracking.
   - Proposed date: 2026-05-21
-  - Finish date: NA
-- [ ] 17. Add ingestion adapters for lab protocols, ELN/LIMS, inventories, and omics summaries.
+  - Finish date: 2026-05-23
+- [x] 17. Add ingestion adapters for lab protocols, ELN/LIMS, inventories, and omics summaries.
   - Proposed date: 2026-05-21
-  - Finish date: NA
-- [ ] 18. Add ingestion tests and transfer/redo acceptance checks.
+  - Finish date: 2026-05-23
+- [x] 18. Add ingestion tests and transfer/redo acceptance checks.
   - Proposed date: 2026-05-21
-  - Finish date: NA
+  - Finish date: 2026-05-23
 - [ ] 19. Treat evaluation as a formal release gate before internal beta.
   - Proposed date: 2026-05-23
   - Finish date: NA

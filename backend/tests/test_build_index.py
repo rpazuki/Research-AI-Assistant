@@ -1,5 +1,6 @@
 from pipelines.corpus_cache import CorpusCache, CorpusManifest
 from pipelines.indexing.build_index import (
+    documents_from_cached_lab_text,
     documents_from_cached_pdf_text,
     load_pmc_ids,
     validate_index_embedding,
@@ -61,3 +62,14 @@ def test_load_pmc_ids_can_use_cached_pubmed_documents(tmp_path) -> None:
     ids = load_pmc_ids({"pmc": {"from_cached_pubmed_documents": True}}, cache=cache)
 
     assert ids == ["PMC123"]
+
+
+def test_documents_from_cached_lab_text_reads_extracted_exports(tmp_path) -> None:
+    cache = make_cache(tmp_path, source="lab_protocols")
+    cache.write_bytes("raw/lab/extracted/protocol123.txt", b"protocol content")
+
+    docs = list(documents_from_cached_lab_text(cache, "lab_protocols"))
+
+    assert docs[0].document_id == "lab_protocols:protocol123"
+    assert docs[0].full_text == "protocol content"
+    assert docs[0].metadata["access_method"] == "local-export"

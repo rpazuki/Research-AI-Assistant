@@ -47,6 +47,10 @@ import asyncpg
 from pipelines.ingestion.pubmed_abstract import PubMedAbstractIngester
 from pipelines.ingestion.pdf_local import LocalPDFIngester
 from pipelines.ingestion.pmc_fulltext import PMCFullTextIngester
+from pipelines.ingestion.lab_sources import (
+    LocalTableCollectionIngester,
+    LocalTextCollectionIngester,
+)
 from pipelines.corpus_cache import (
     CorpusCache,
     create_cache_from_config,
@@ -59,6 +63,10 @@ from pipelines.processing.normalizer import NormalizedDocument
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+
+LOCAL_TEXT_SOURCES = {"lab_protocols"}
+LOCAL_TABLE_SOURCES = {"eln_lims", "inventories", "omics_summaries"}
+LOCAL_LAB_SOURCES = LOCAL_TEXT_SOURCES | LOCAL_TABLE_SOURCES
 
 
 async def upsert_document(conn, doc: NormalizedDocument, manifest_id: uuid.UUID) -> uuid.UUID:
@@ -193,6 +201,30 @@ def documents_from_cached_pdf_text(cache: CorpusCache) -> Iterator[NormalizedDoc
         )
 
 
+def documents_from_cached_lab_text(cache: CorpusCache, source: str) -> Iterator[NormalizedDocument]:
+    for text_path in sorted((cache.root / "raw/lab/extracted").glob("*.txt")):
+        content_hash = text_path.stem
+        full_text = text_path.read_text().strip()
+        if not full_text:
+            continue
+        yield NormalizedDocument(
+            document_id=f"{source}:{content_hash}",
+            source=source,
+            title=content_hash,
+            full_text=full_text,
+            license="internal",
+            metadata={
+                "content_sha256": content_hash,
+                "source_system": source,
+                "extracted_text_path": cache.relative_path(text_path),
+                "access_status": "internal",
+                "access_method": "local-export",
+                "sensitivity": "internal",
+                "parser_version": "local-text-v1",
+            },
+        )
+
+
 def documents_from_cache(cache: CorpusCache, source: str) -> list[NormalizedDocument]:
     documents = cache.read_documents()
     if documents:
@@ -204,6 +236,8 @@ def documents_from_cache(cache: CorpusCache, source: str) -> list[NormalizedDocu
         documents = list(documents_from_cached_pmc_xml(cache))
     elif source == "pdf":
         documents = list(documents_from_cached_pdf_text(cache))
+    elif source in LOCAL_LAB_SOURCES:
+        documents = list(documents_from_cached_lab_text(cache, source))
     else:
         raise ValueError(f"Unknown cache source: {source}")
 
@@ -222,6 +256,12 @@ def cached_chunks_by_document(cache: CorpusCache | None) -> dict[str, list]:
     for chunk in cache.read_chunks():
         chunks_by_doc.setdefault(chunk.document_id, []).append(chunk)
     return chunks_by_doc
+
+
+def local_source_config(cfg: dict, source: str) -> dict:
+    source_cfg = cfg.get(source, {})
+    shared_cfg = cfg.get("local", {})
+    return {**shared_cfg, **source_cfg}
 
 
 async def build_index(
@@ -324,6 +364,29 @@ async def build_index(
             documents = LocalPDFIngester(
                 pdf_dir=cfg.get("pdf", {}).get("dir", "./data/pdfs"),
                 cache=cache,
+            ).fetch()
+        elif source in LOCAL_TEXT_SOURCES:
+            local_cfg = local_source_config(cfg, source)
+            documents = LocalTextCollectionIngester(
+                directory=local_cfg.get("dir", f"./data/{source}"),
+                source_name=source,
+                cache=cache,
+                access_status=local_cfg.get("access_status", "internal"),
+                sensitivity=local_cfg.get("sensitivity", "internal"),
+                owner=local_cfg.get("owner"),
+                retention_policy=local_cfg.get("retention_policy", "internal-project-storage"),
+            ).fetch()
+        elif source in LOCAL_TABLE_SOURCES:
+            local_cfg = local_source_config(cfg, source)
+            documents = LocalTableCollectionIngester(
+                directory=local_cfg.get("dir", f"./data/{source}"),
+                source_name=source,
+                cache=cache,
+                access_status=local_cfg.get("access_status", "internal"),
+                sensitivity=local_cfg.get("sensitivity", "internal"),
+                owner=local_cfg.get("owner"),
+                retention_policy=local_cfg.get("retention_policy", "internal-project-storage"),
+                max_rows=local_cfg.get("max_rows", 500),
             ).fetch()
         else:
             raise ValueError(f"Unknown source: {source}")

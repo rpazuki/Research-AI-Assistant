@@ -29,6 +29,27 @@ PARSER_VERSIONS = {
     "pubmed": "pubmed-v1",
     "pmc_jats": "pmc-jats-v1",
     "pdf": "pdf-v1",
+    "local_text": "local-text-v1",
+    "local_table": "local-table-v1",
+}
+ACCESS_STATUSES = {
+    "metadata-only",
+    "open-access",
+    "open-access-candidate",
+    "licensed-access",
+    "internal",
+    "restricted",
+    "unavailable",
+    "failed",
+    "candidate",
+}
+SENSITIVITY_VALUES = {
+    "public",
+    "internal",
+    "licensed",
+    "confidential",
+    "personal-data",
+    "restricted",
 }
 
 
@@ -173,10 +194,14 @@ class CorpusCache:
             "raw/doi/discovery",
             "raw/pdf/originals",
             "raw/pdf/extracted",
+            "raw/licensed/originals",
+            "raw/lab/originals",
+            "raw/lab/extracted",
             "normalized",
             "chunks",
             "assets",
             "reports",
+            "acquisition",
         ]:
             (self.root / relative).mkdir(parents=True, exist_ok=True)
 
@@ -251,6 +276,11 @@ class CorpusCache:
         terms_note: str | None = None,
         parser_version: str | None = None,
         retrieved_at: datetime | None = None,
+        source_system: str | None = None,
+        access_method: str | None = None,
+        sensitivity: str | None = None,
+        retention_policy: str | None = None,
+        owner: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         path = self.root / relative_path
@@ -268,6 +298,11 @@ class CorpusCache:
             "license": license,
             "terms_note": terms_note,
             "parser_version": parser_version,
+            "source_system": source_system,
+            "access_method": access_method,
+            "sensitivity": sensitivity,
+            "retention_policy": retention_policy,
+            "owner": owner,
         }
         if extra:
             record.update(extra)
@@ -297,6 +332,55 @@ class CorpusCache:
     def read_chunks(self) -> list[Chunk]:
         return [chunk_from_cache_record(record) for record in self.read_jsonl("chunks/chunks.jsonl")]
 
+    def validate(self) -> dict[str, Any]:
+        """Validate that a cache is portable enough for local-only re-indexing."""
+        errors: list[str] = []
+        warnings: list[str] = []
+        manifest_path = self.root / "manifest.json"
+        if not manifest_path.exists():
+            errors.append("manifest.json is missing")
+
+        asset_records = self.read_jsonl("assets/asset_manifest.jsonl")
+        for record in asset_records:
+            relative_path = record.get("relative_path")
+            if not relative_path:
+                errors.append("asset record is missing relative_path")
+                continue
+            asset_path = self.root / relative_path
+            if not asset_path.exists():
+                errors.append(f"asset file is missing: {relative_path}")
+                continue
+            actual_sha = sha256_file(asset_path)
+            if record.get("sha256") != actual_sha:
+                errors.append(f"asset checksum mismatch: {relative_path}")
+            if record.get("access_status") not in ACCESS_STATUSES:
+                warnings.append(f"unknown access_status for {relative_path}: {record.get('access_status')}")
+            sensitivity = record.get("sensitivity")
+            if sensitivity and sensitivity not in SENSITIVITY_VALUES:
+                warnings.append(f"unknown sensitivity for {relative_path}: {sensitivity}")
+
+        document_records = self.read_jsonl("normalized/documents.jsonl")
+        for record in document_records:
+            if not record.get("cache_id"):
+                errors.append(f"document is missing cache_id: {record.get('document_id')}")
+            if not record.get("sha256"):
+                errors.append(f"document is missing sha256: {record.get('document_id')}")
+            if record.get("access_status") not in ACCESS_STATUSES:
+                warnings.append(
+                    f"unknown access_status for {record.get('document_id')}: {record.get('access_status')}"
+                )
+
+        return {
+            "ok": not errors,
+            "errors": errors,
+            "warnings": warnings,
+            "counts": {
+                "assets": len(asset_records),
+                "documents": len(document_records),
+                "chunks": len(self.read_jsonl("chunks/chunks.jsonl")),
+            },
+        }
+
 
 def document_to_cache_record(
     doc: NormalizedDocument,
@@ -320,6 +404,12 @@ def document_to_cache_record(
         "access_status": access_status or doc.metadata.get("access_status") or doc.license or "metadata-only",
         "retrieved_at": (retrieved_at or utc_now()).isoformat().replace("+00:00", "Z"),
         "parser_version": parser_version,
+        "source_system": doc.metadata.get("source_system") or doc.source,
+        "source_url": doc.url,
+        "access_method": doc.metadata.get("access_method"),
+        "sensitivity": doc.metadata.get("sensitivity"),
+        "retention_policy": doc.metadata.get("retention_policy"),
+        "owner": doc.metadata.get("owner"),
     }
     canonical = json.dumps(record, sort_keys=True, default=_json_default).encode()
     digest = sha256 or sha256_bytes(canonical)
@@ -347,6 +437,12 @@ def document_from_cache_record(record: dict[str, Any]) -> NormalizedDocument:
         "access_status",
         "retrieved_at",
         "parser_version",
+        "source_system",
+        "source_url",
+        "access_method",
+        "sensitivity",
+        "retention_policy",
+        "owner",
     ]:
         if key in record:
             metadata[key] = record[key]
@@ -494,6 +590,10 @@ def main() -> None:
     create.add_argument("--base-dir", default="data/corpora")
     create.add_argument("--run-id")
     create.set_defaults(func=_cmd_create)
+
+    validate = subparsers.add_parser("validate", help="Validate a cache for transfer/local re-indexing")
+    validate.add_argument("--cache", required=True)
+    validate.set_defaults(func=lambda args: print(json.dumps(CorpusCache.open(args.cache).validate(), indent=2)))
 
     args = parser.parse_args()
     args.func(args)
