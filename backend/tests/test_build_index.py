@@ -1,5 +1,6 @@
 from pipelines.corpus_cache import CorpusCache, CorpusManifest
 from pipelines.indexing.build_index import (
+    batched,
     documents_from_cached_lab_text,
     documents_from_cached_pdf_text,
     load_pmc_ids,
@@ -26,6 +27,10 @@ def test_validate_index_embedding_rejects_non_matching_dimensions() -> None:
         assert "minilm" in str(exc)
     else:
         raise AssertionError("Expected validate_index_embedding to reject non-768 dimensions")
+
+
+def test_batched_splits_items_into_fixed_size_batches() -> None:
+    assert list(batched([1, 2, 3, 4, 5], 2)) == [[1, 2], [3, 4], [5]]
 
 
 def make_cache(tmp_path, source: str = "pdf") -> CorpusCache:
@@ -62,6 +67,12 @@ def test_load_pmc_ids_can_use_cached_pubmed_documents(tmp_path) -> None:
     ids = load_pmc_ids({"pmc": {"from_cached_pubmed_documents": True}}, cache=cache)
 
     assert ids == ["PMC123"]
+
+
+def test_load_pmc_ids_preserves_pubmed_ids_and_dois() -> None:
+    ids = load_pmc_ids({"pmc": {"ids": ["41812577", "PMC1234567", "10.1000/example", "pmc7654321"]}})
+
+    assert ids == ["41812577", "PMC1234567", "10.1000/example", "PMC7654321"]
 
 
 def test_documents_from_cached_lab_text_reads_extracted_exports(tmp_path) -> None:

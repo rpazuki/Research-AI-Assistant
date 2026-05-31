@@ -94,14 +94,23 @@ async def upsert_document(conn, doc: NormalizedDocument, manifest_id: uuid.UUID)
     return row["id"]
 
 
-async def upsert_chunks_with_embeddings(conn, doc_db_id: uuid.UUID, manifest_id: uuid.UUID,
-                                         chunks, embeddings, embedding_model_name: str):
+async def upsert_chunks_with_embeddings(
+    conn,
+    doc_db_id: uuid.UUID,
+    manifest_id: uuid.UUID,
+    chunks,
+    embeddings,
+    embedding_model_name: str,
+    *,
+    replace_existing: bool = True,
+):
     """Batch upsert chunks with their embeddings."""
-    await conn.execute(
-        "DELETE FROM document_chunks WHERE document_id=$1 AND embedding_model=$2",
-        doc_db_id,
-        embedding_model_name,
-    )
+    if replace_existing:
+        await conn.execute(
+            "DELETE FROM document_chunks WHERE document_id=$1 AND embedding_model=$2",
+            doc_db_id,
+            embedding_model_name,
+        )
     for chunk, embedding in zip(chunks, embeddings):
         embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
         await conn.execute(
@@ -142,7 +151,11 @@ def load_pmc_ids(cfg: dict, cache: CorpusCache | None = None) -> list[str]:
     seen: set[str] = set()
     unique_ids: list[str] = []
     for pmc_id in pmc_ids:
-        normalized = pmc_id if pmc_id.startswith("PMC") else f"PMC{pmc_id}"
+        normalized = str(pmc_id).strip()
+        if not normalized:
+            continue
+        if normalized.upper().startswith("PMC"):
+            normalized = f"PMC{normalized[3:]}"
         if normalized not in seen:
             seen.add(normalized)
             unique_ids.append(normalized)
@@ -258,6 +271,13 @@ def cached_chunks_by_document(cache: CorpusCache | None) -> dict[str, list]:
     return chunks_by_doc
 
 
+def batched(items: list, batch_size: int) -> Iterator[list]:
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+    for start in range(0, len(items), batch_size):
+        yield items[start : start + batch_size]
+
+
 def local_source_config(cfg: dict, source: str) -> dict:
     source_cfg = cfg.get(source, {})
     shared_cfg = cfg.get("local", {})
@@ -272,6 +292,7 @@ async def build_index(
     use_cache: bool = True,
     local_only: bool = False,
     write_queue: bool = False,
+    include_cached_fulltext: bool = False,
 ):
     """Main indexing pipeline."""
     cfg = load_toml(config_path)
@@ -326,10 +347,15 @@ async def build_index(
 
     # Chunker
     chunk_cfg = cfg.get("chunking", {})
+    indexing_cfg = cfg.get("indexing", {})
     chunker = Chunker(
         chunk_size=chunk_cfg.get("chunk_size", 512),
         chunk_overlap=chunk_cfg.get("chunk_overlap", 64),
         mode="abstract" if "abstract" in source else "fulltext",
+    )
+    embedding_batch_size = indexing_cfg.get(
+        "embedding_batch_size",
+        32 if source == "pubmed_abstract" else 2,
     )
     cached_chunks = cached_chunks_by_document(cache)
 
@@ -418,15 +444,23 @@ async def build_index(
             if cache is not None and doc.document_id not in cached_chunks:
                 cache.write_chunks(chunks, embedding_model=embedding_model_name)
 
-            chunk_texts = [c.content for c in chunks]
+            replace_existing_chunks = True
+            for chunk_batch in batched(chunks, embedding_batch_size):
+                chunk_texts = [c.content for c in chunk_batch]
 
-            # Embed in batches of 32
-            import asyncio
-            embeddings = await asyncio.to_thread(embedder.embed_documents, chunk_texts)
+                import asyncio
+                embeddings = await asyncio.to_thread(embedder.embed_documents, chunk_texts)
 
-            await upsert_chunks_with_embeddings(
-                conn, doc_db_id, manifest_id, chunks, embeddings, embedder.model_name
-            )
+                await upsert_chunks_with_embeddings(
+                    conn,
+                    doc_db_id,
+                    manifest_id,
+                    chunk_batch,
+                    embeddings,
+                    embedder.model_name,
+                    replace_existing=replace_existing_chunks,
+                )
+                replace_existing_chunks = False
             chunk_count += len(chunks)
 
             if doc_count % 100 == 0:
@@ -434,7 +468,12 @@ async def build_index(
 
         if write_queue and cache is not None:
             queue_path = cache.root / "reports" / "acquisition_queue.jsonl"
-            queue_count = write_acquisition_queue(processed_docs, queue_path)
+            queue_count = write_acquisition_queue(
+                processed_docs,
+                queue_path,
+                cache=cache,
+                include_cached_fulltext=include_cached_fulltext,
+            )
             logger.info(f"Wrote {queue_count} acquisition candidates to {queue_path}")
 
     finally:
@@ -446,6 +485,7 @@ async def build_index(
         await conn.close()
         if cache is not None:
             cache.update_counts(normalized_documents=doc_count, chunks=chunk_count)
+            cache.refresh_counts_from_artifacts()
         logger.info(f"Indexing complete: {doc_count} documents, {chunk_count} chunks")
         logger.info(
             "REMINDER: If this is the first load, create the IVFFlat index:\n"
@@ -463,6 +503,11 @@ if __name__ == "__main__":
     parser.add_argument("--no-cache", action="store_true", help="Disable corpus cache writes")
     parser.add_argument("--local-only", action="store_true", help="Read only local cache artifacts; make no network calls")
     parser.add_argument("--write-acquisition-queue", action="store_true", help="Write DOI/PMCID full-text candidates to reports/acquisition_queue.jsonl")
+    parser.add_argument(
+        "--include-cached-fulltext",
+        action="store_true",
+        help="When writing an acquisition queue, include documents whose PMC XML is already cached under raw/pmc/xml",
+    )
     args = parser.parse_args()
 
     from_date = date.fromisoformat(args.from_date) if args.from_date else None
@@ -475,5 +520,6 @@ if __name__ == "__main__":
             use_cache=not args.no_cache,
             local_only=args.local_only,
             write_queue=args.write_acquisition_queue,
+            include_cached_fulltext=args.include_cached_fulltext,
         )
     )

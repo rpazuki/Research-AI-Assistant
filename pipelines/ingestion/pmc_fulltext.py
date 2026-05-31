@@ -23,8 +23,10 @@ IMPLEMENTER NOTE:
 """
 
 import logging
+import os
 import time
 from collections.abc import Iterator
+from typing import Any
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -36,7 +38,9 @@ from pipelines.processing.normalizer import NormalizedDocument
 
 logger = logging.getLogger(__name__)
 
-PMC_OA_BASE = "https://www.ncbi.nlm.nih.gov/pmc/oai/oai.cgi"
+PMC_OA_BASE = "https://pmc.ncbi.nlm.nih.gov/api/oai/v1/mh/"
+PMC_IDCONV_BASE = "https://pmc.ncbi.nlm.nih.gov/tools/idconv/api/v1/articles/"
+PMC_ARTICLE_BASE = "https://pmc.ncbi.nlm.nih.gov/articles"
 
 
 def _local_name(tag: str) -> str:
@@ -205,39 +209,83 @@ class PMCFullTextIngester(BaseIngester):
                             parser_version=PARSER_VERSIONS["pmc_jats"],
                         )
                     yield doc
-                time.sleep(self.sleep_s)
             except Exception as exc:
                 logger.error(f"Failed to fetch PMC {pmc_id}: {exc}")
+                if self.cache is not None:
+                    self.cache.write_document_error(
+                        {
+                            "source": self.source_name,
+                            "identifier": pmc_id,
+                            "error_type": type(exc).__name__,
+                            "message": str(exc),
+                            "access_status": "failed",
+                        }
+                    )
+            finally:
+                time.sleep(self.sleep_s)
 
     def _fetch_one(self, pmc_id: str) -> NormalizedDocument | None:
         """Fetch and parse one PMC article."""
-        url = f"{PMC_OA_BASE}?verb=GetRecord&identifier=oai:pubmedcentral.nih.gov:{pmc_id.replace('PMC', '')}&metadataPrefix=pmc"
-        safe_pmc_id = self._safe_pmc_id(pmc_id)
+        resolved = self._resolve_to_pmcid(pmc_id)
+        if resolved is None:
+            logger.warning(f"No PMC record found for identifier {pmc_id}; skipping")
+            if self.cache is not None:
+                self.cache.write_document_error(
+                    {
+                        "source": self.source_name,
+                        "identifier": pmc_id,
+                        "error_type": "no_pmc_record",
+                        "message": (
+                            "Identifier was not found in PubMed Central. A PubMed record may exist, "
+                            "but PMC full-text ingestion requires an article to have a PMCID."
+                        ),
+                        "access_status": "unavailable",
+                    }
+                )
+            return None
+
+        safe_pmc_id = resolved["pmcid"]
+        url = self._oai_url(safe_pmc_id)
         relative_path = f"raw/pmc/xml/{safe_pmc_id}.xml"
 
         if self.cache is not None and (self.cache.root / relative_path).exists():
             xml_text = (self.cache.root / relative_path).read_text()
             logger.info(f"Using cached PMC XML: {relative_path}")
+            source_url = url
+            cache_hit = True
         else:
-            with httpx.Client(timeout=30) as client:
-                response = client.get(url)
-                response.raise_for_status()
-            xml_text = response.text
+            cache_hit = False
+            try:
+                xml_text, source_url = self._fetch_xml(url)
+            except httpx.HTTPStatusError as exc:
+                fallback = self._handle_oai_status_error(exc, pmc_id, safe_pmc_id)
+                if fallback is None:
+                    return None
+                xml_text, source_url = fallback
             if self.cache is not None:
                 self.cache.write_bytes(relative_path, xml_text.encode("utf-8"))
                 self.cache.record_asset(
                     document_id=f"pmc:{pmc_id}",
                     asset_type="pmc_xml",
                     relative_path=relative_path,
-                    source_url=url,
+                    source_url=source_url,
                     access_status="open-access",
                     license="open-access",
                     terms_note="PMC Open Access XML",
                     parser_version=PARSER_VERSIONS["pmc_jats"],
+                    extra={
+                        "requested_identifier": pmc_id,
+                        "requested_url": url,
+                        "resolved_pmid": resolved.get("pmid"),
+                        "id_conversion": resolved,
+                    },
                 )
 
         doc = self.parse_xml(xml_text, safe_pmc_id)
-        logger.info(f"Fetched PMC {pmc_id}: {len(xml_text)} chars")
+        if cache_hit:
+            logger.info(f"Parsed cached PMC XML {safe_pmc_id}: {len(xml_text)} chars")
+        else:
+            logger.info(f"Downloaded PMC XML {safe_pmc_id}: {len(xml_text)} chars")
         return doc
 
     @staticmethod
@@ -260,10 +308,128 @@ class PMCFullTextIngester(BaseIngester):
             full_text=full_text,
             keywords=metadata["keywords"],
             license=metadata["license"] or "open-access",
-            url=f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/",
+            url=f"{PMC_ARTICLE_BASE}/{pmc_id}/",
             metadata={"access_status": "open-access", "parser_version": PARSER_VERSIONS["pmc_jats"]},
         )
 
     @staticmethod
     def _safe_pmc_id(pmc_id: str) -> str:
-        return pmc_id if pmc_id.startswith("PMC") else f"PMC{pmc_id}"
+        clean = pmc_id.strip()
+        if clean.upper().startswith("PMC"):
+            return f"PMC{clean[3:]}"
+        return f"PMC{clean}"
+
+    @staticmethod
+    def _oai_url(pmc_id: str) -> str:
+        numeric_pmc_id = pmc_id.replace("PMC", "", 1)
+        return (
+            f"{PMC_OA_BASE}?verb=GetRecord"
+            f"&identifier=oai:pubmedcentral.nih.gov:{numeric_pmc_id}"
+            "&metadataPrefix=pmc"
+        )
+
+    @staticmethod
+    def _fetch_xml(url: str) -> tuple[str, str]:
+        response = PMCFullTextIngester._get_with_backoff(url)
+        return response.text, str(response.url)
+
+    @classmethod
+    def _resolve_to_pmcid(cls, identifier: str) -> dict[str, Any] | None:
+        """Resolve PMCID, PMID, DOI, or a mis-prefixed PMID to a PMCID."""
+        clean_identifier = identifier.strip()
+        if clean_identifier.upper().startswith("PMC") and clean_identifier[3:].isdigit():
+            return {"pmcid": cls._safe_pmc_id(clean_identifier)}
+
+        resolved = cls._convert_identifier(clean_identifier)
+        if resolved and resolved.get("pmcid"):
+            return resolved
+
+        return None
+
+    @staticmethod
+    def _convert_identifier(identifier: str, idtype: str | None = None) -> dict[str, Any] | None:
+        params: dict[str, str] = {
+            "ids": identifier,
+            "format": "json",
+            "tool": "RLALab_AI_Assistant",
+        }
+        email = os.environ.get("NCBI_EMAIL")
+        if email:
+            params["email"] = email
+        if idtype:
+            params["idtype"] = idtype
+
+        response = PMCFullTextIngester._get_with_backoff(PMC_IDCONV_BASE, params=params)
+
+        payload = response.json()
+        records = payload.get("records") or []
+        if not records:
+            return None
+        record = records[0]
+        if not record.get("pmcid"):
+            return None
+        return record
+
+    @staticmethod
+    def _get_with_backoff(
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        attempts: int = 4,
+    ) -> httpx.Response:
+        last_error: httpx.HTTPStatusError | None = None
+        with httpx.Client(timeout=30, follow_redirects=True, headers={"Accept-Encoding": "gzip, deflate"}) as client:
+            for attempt in range(attempts):
+                response = client.get(url, params=params)
+                if response.status_code != 429:
+                    response.raise_for_status()
+                    return response
+
+                last_error = httpx.HTTPStatusError(
+                    "429 Too Many Requests",
+                    request=response.request,
+                    response=response,
+                )
+                retry_after = response.headers.get("retry-after")
+                if retry_after and retry_after.isdigit():
+                    sleep_s = float(retry_after)
+                else:
+                    sleep_s = min(30.0, 2.0 * (2 ** attempt))
+                logger.warning("PMC request rate-limited; sleeping %.1fs before retry", sleep_s)
+                time.sleep(sleep_s)
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("PMC request failed before a response was returned")
+
+    def _handle_oai_status_error(
+        self,
+        exc: httpx.HTTPStatusError,
+        requested_identifier: str,
+        pmc_id: str,
+    ) -> tuple[str, str] | None:
+        status_code = exc.response.status_code
+        response_text = exc.response.text[:1000]
+
+        if status_code == 400:
+            message = (
+                "PMC OAI did not return reusable full-text XML for this PMCID. "
+                "The article may be in PMC but outside the OAI full-text reuse subset."
+            )
+            logger.warning("%s %s: %s", message, pmc_id, response_text)
+            if self.cache is not None:
+                self.cache.write_document_error(
+                    {
+                        "source": self.source_name,
+                        "identifier": requested_identifier,
+                        "pmc_id": pmc_id,
+                        "error_type": "pmc_oai_fulltext_unavailable",
+                        "status_code": status_code,
+                        "message": message,
+                        "response_text": response_text,
+                        "access_status": "unavailable",
+                    }
+                )
+            return None
+
+        raise exc

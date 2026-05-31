@@ -82,6 +82,12 @@ data/corpora/<corpus_name>/<run_id>/
 `data/` is gitignored. Transfer cache directories through lab storage, archive,
 or `rsync`, not by committing source material.
 
+## Cumulative vs per-run, auditabile runs
+
+The default behaviour of build_index, creates a `data/corpora/rlalab-pubmed-v1/<run_id>/` folder, where `<run_id>` is a fresh timestamped. Therefore, cached data is separated per-run and usful for auditability. 
+
+To make the runs cumulative, use `--cache <latest-incremental-folder>`, and then the cached data will be added into the same folder.
+
 ## PubMed Abstract Ingestion
 
 This fetches PubMed PMIDs and raw XML, caches the XML, writes normalized
@@ -235,6 +241,15 @@ python -m pipelines.indexing.build_index \
   --write-acquisition-queue
 ```
 
+By default the queue skips documents whose PMC full-text XML is already cached
+under `raw/pmc/xml/<PMCID>.xml`. This avoids re-queuing records that the PMC
+full-text ingestion workflow has already acquired. To intentionally include
+already-cached PMC full text, for audit or refresh review, add:
+
+```bash
+--include-cached-fulltext
+```
+
 The queue is written to:
 
 ```text
@@ -260,6 +275,11 @@ python -m pipelines.acquisition.fulltext export-review \
   --cache data/corpora/<corpus_name>/<run_id>
 ```
 
+The export also filters already-cached PMC XML by default, even if an older
+`reports/acquisition_queue.jsonl` still contains stale records. Use
+`--include-cached-fulltext` to override that filter, and `--refresh-queue` to
+regenerate the JSONL queue before exporting.
+
 This writes:
 
 ```text
@@ -279,6 +299,37 @@ python -m pipelines.acquisition.fulltext register-asset \
   --license licensed-access \
   --terms-note "Imperial library access for internal project use" \
   --acquired-by "authorized lab member"
+```
+
+For multiple already-downloaded PDFs, first create a CSV template:
+
+```bash
+python -m pipelines.acquisition.fulltext batch-template \
+  --output acquisition_batch.csv
+```
+
+Fill one row per file. Required columns are `file`, `document_id`, and either
+row-level `access_method` or a CLI default. Relative file paths are resolved
+from the manifest directory unless `--base-dir` is supplied. Supported manifest
+formats are `.csv`, `.jsonl`, and `.ndjson`.
+
+Dry-run validation:
+
+```bash
+python -m pipelines.acquisition.fulltext register-batch \
+  --cache data/corpora/<corpus_name>/<run_id> \
+  --manifest acquisition_batch.csv \
+  --default-access-method imperial-library \
+  --dry-run
+```
+
+Register the batch:
+
+```bash
+python -m pipelines.acquisition.fulltext register-batch \
+  --cache data/corpora/<corpus_name>/<run_id> \
+  --manifest acquisition_batch.csv \
+  --default-access-method imperial-library
 ```
 
 Allowed access methods are:
@@ -337,8 +388,8 @@ known access/sensitivity values.
 
 ## Local Lab Data Adapters
 
-The lab-data adapters ingest local exports only. They do not connect to ELN,
-LIMS, inventory systems, cloud storage, or remote services.
+The lab-data adapters ingest local exports only. They do not connect to ELN (Elctronic Lab Notebook),
+LIMS (Lbratory Information Managment System), inventory systems, cloud storage, or remote services.
 
 ### Protocols And SOPs
 

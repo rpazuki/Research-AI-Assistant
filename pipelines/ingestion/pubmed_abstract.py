@@ -30,7 +30,7 @@ from pathlib import Path
 from Bio import Entrez
 
 from pipelines.ingestion.base import BaseIngester
-from pipelines.corpus_cache import CorpusCache, PARSER_VERSIONS
+from pipelines.corpus_cache import CorpusCache, PARSER_VERSIONS, sha256_bytes
 from pipelines.processing.normalizer import AuthorRecord, NormalizedDocument
 
 import logging
@@ -153,6 +153,7 @@ class PubMedAbstractIngester(BaseIngester):
                 raw_records=raw_count,
                 normalized_documents=normalized_count,
             )
+            self.cache.refresh_counts_from_artifacts()
 
     def _collect_pmids(self) -> list[str]:
         """Collect all PMIDs for the configured query, splitting by year.
@@ -194,7 +195,7 @@ class PubMedAbstractIngester(BaseIngester):
             with open(checkpoint_file, "w") as f:
                 json.dump(year_pmids, f)
             if self.cache is not None:
-                self.cache.write_json(f"raw/pubmed/esearch/pmids_{year}.json", {"pmids": year_pmids})
+                self.cache.write_json(self._cache_esearch_relative_path_for_year(year), {"pmids": year_pmids})
             all_pmids.extend(year_pmids)
 
         return all_pmids
@@ -240,6 +241,11 @@ class PubMedAbstractIngester(BaseIngester):
         if self.incremental_from is None:
             return self.checkpoint_dir / f"pmids_{year}.json"
         return self.checkpoint_dir / f"pmids_{year}_{self.incremental_from.isoformat()}.json"
+
+    def _cache_esearch_relative_path_for_year(self, year: int) -> str:
+        if self.incremental_from is None:
+            return f"raw/pubmed/esearch/pmids_{year}.json"
+        return f"raw/pubmed/esearch/pmids_{year}_{self.incremental_from.isoformat()}.json"
 
     def _build_year_query(self, year: int) -> str:
         year_query = f"({self.query}) AND {year}[PDAT]"
@@ -291,12 +297,13 @@ class PubMedAbstractIngester(BaseIngester):
         """Parse a raw PubMed efetch XML payload into Biopython records."""
         return Entrez.read(io.BytesIO(xml_text.encode("utf-8")))
 
-    def _get_or_fetch_batch_xml(self, id_list: list[str], batch_number: int) -> tuple[str, str | None]:
+    def _get_or_fetch_batch_xml(self, id_list: list[str], _batch_number: int) -> tuple[str, str | None]:
         """Load cached efetch XML for a batch or fetch and cache it."""
         if self.cache is None:
             return self._safe_efetch_xml(id_list), None
 
-        relative_path = f"raw/pubmed/efetch/batch_{batch_number:06d}.xml"
+        batch_digest = sha256_bytes("\n".join(id_list).encode("utf-8"))[:16]
+        relative_path = f"raw/pubmed/efetch/batch_{batch_digest}.xml"
         path = self.cache.root / relative_path
         if path.exists():
             logger.info(f"Using cached PubMed efetch XML: {relative_path}")

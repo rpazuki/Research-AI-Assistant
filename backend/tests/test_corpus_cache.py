@@ -3,11 +3,13 @@ from datetime import datetime
 from pipelines.corpus_cache import (
     CorpusCache,
     CorpusManifest,
+    cached_pmc_xml_exists,
     chunk_from_cache_record,
     chunk_to_cache_record,
     document_from_cache_record,
     document_to_cache_record,
     full_text_candidates,
+    write_acquisition_queue,
 )
 from pipelines.processing.chunker import Chunk
 from pipelines.processing.normalizer import AuthorRecord, NormalizedDocument
@@ -88,3 +90,64 @@ def test_full_text_candidates_include_pmcid_and_doi_routes() -> None:
 
     assert {candidate["route"] for candidate in candidates} == {"pmcid", "doi"}
     assert candidates[0]["access_status"] == "open-access-candidate"
+
+
+def test_full_text_candidates_skip_document_when_pmc_xml_is_cached(tmp_path) -> None:
+    cache = CorpusCache.create(base_dir=tmp_path, manifest=make_manifest())
+    cache.write_bytes("raw/pmc/xml/PMC123.xml", b"<article/>")
+    doc = NormalizedDocument(
+        document_id="pmid:123",
+        source="pubmed",
+        pmid="123",
+        pmc_id="PMC123",
+        doi="10.1000/example",
+    )
+
+    assert cached_pmc_xml_exists(cache, "PMC123") is True
+    assert full_text_candidates(doc, cache=cache) == []
+
+    candidates = full_text_candidates(doc, cache=cache, include_cached_fulltext=True)
+    assert {candidate["route"] for candidate in candidates} == {"pmcid", "doi"}
+
+
+def test_write_acquisition_queue_skips_cached_pmc_xml_unless_included(tmp_path) -> None:
+    cache = CorpusCache.create(base_dir=tmp_path, manifest=make_manifest())
+    cache.write_bytes("raw/pmc/xml/PMC123.xml", b"<article/>")
+    doc = NormalizedDocument(
+        document_id="pmid:123",
+        source="pubmed",
+        pmid="123",
+        pmc_id="PMC123",
+        doi="10.1000/example",
+    )
+    queue_path = cache.root / "reports" / "acquisition_queue.jsonl"
+
+    count = write_acquisition_queue([doc], queue_path, cache=cache)
+    assert count == 0
+    assert queue_path.read_text() == ""
+
+    count = write_acquisition_queue([doc], queue_path, cache=cache, include_cached_fulltext=True)
+    assert count == 2
+    assert len(cache.read_jsonl("reports/acquisition_queue.jsonl")) == 2
+
+
+def test_refresh_counts_from_artifacts_counts_accumulated_jsonl(tmp_path) -> None:
+    cache = CorpusCache.create(base_dir=tmp_path, manifest=make_manifest())
+    cache.write_document(NormalizedDocument(document_id="pmid:1", source="pubmed", pmid="1"))
+    cache.write_document(NormalizedDocument(document_id="pmid:2", source="pubmed", pmid="2"))
+    cache.write_chunks(
+        [
+            Chunk(document_id="pmid:1", chunk_index=0, chunk_type="abstract", content="one"),
+            Chunk(document_id="pmid:2", chunk_index=0, chunk_type="abstract", content="two"),
+        ],
+        embedding_model="pubmedbert",
+    )
+    cache.write_bytes("raw/pubmed/efetch/batch_a.xml", b"<xml/>")
+
+    cache.refresh_counts_from_artifacts()
+
+    assert cache.manifest is not None
+    assert cache.manifest.counts["pmids"] == 2
+    assert cache.manifest.counts["raw_records"] == 1
+    assert cache.manifest.counts["normalized_documents"] == 2
+    assert cache.manifest.counts["chunks"] == 2

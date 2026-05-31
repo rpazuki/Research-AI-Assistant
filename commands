@@ -1,0 +1,39 @@
+
+# Create user
+python scripts/create_user.py \
+  --email r.pazuki12@imperial.ac.uk \
+  --password 123456@654321 \
+  --role admin
+
+# Restart the backend
+lsof -tiTCP:8000 -sTCP:LISTEN | xargs -r kill
+cd /Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/backend
+/Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# PubMed Abstract Ingestion
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/pubmed_abstract.rlalab.toml \
+  --year 2024 \
+  --cache /Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/data/corpora/rlalab-pubmed-v1/cumulative
+
+# PDF Ingestion
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/pdf.rlalab.toml \
+  --cache /Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/data/corpora/rlalab-pubmed-v1/cumulative
+
+# PMC Full-Text Ingestion
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/pmc_fulltext.rlalab.toml \
+  --cache /Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/data/corpora/rlalab-pubmed-v1/cumulative
+
+# DOI/PMCID Acquisition Queue
+# check reports/acquisition_queue.jsonl after
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/pmc_fulltext.rlalab.toml \
+  --cache /Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/data/corpora/rlalab-pubmed-v1/cumulative \
+  --local-only \
+  --write-acquisition-queue
+
+# Export a spreadsheet-friendly queue for manual access review
+python -m pipelines.acquisition.fulltext export-review \
+--cache /Users/roozbeh/Research/Bezos_Centre/codes/RLALab-AI-Assistant/data/corpora/rlalab-pubmed-v1/cumulative

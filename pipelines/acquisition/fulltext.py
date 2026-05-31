@@ -19,6 +19,7 @@ from typing import Any
 from pipelines.corpus_cache import (
     CorpusCache,
     SENSITIVITY_VALUES,
+    cached_pmc_xml_exists,
     sha256_file,
     utc_now,
     write_acquisition_queue,
@@ -39,6 +40,21 @@ ALLOWED_ASSET_TYPES = {
     ".txt": "licensed_text",
 }
 
+BATCH_FIELDS = [
+    "file",
+    "document_id",
+    "access_method",
+    "access_status",
+    "source_url",
+    "license",
+    "terms_note",
+    "acquired_by",
+    "sensitivity",
+    "retention_policy",
+    "owner",
+    "notes",
+]
+
 
 def acquisition_guidance() -> str:
     return (
@@ -55,17 +71,56 @@ def ensure_allowed_access_method(access_method: str) -> None:
         raise ValueError(f"Unknown access method '{access_method}'. Allowed: {allowed}")
 
 
-def read_queue(cache: CorpusCache) -> list[dict[str, Any]]:
+def _filter_cached_fulltext_records(
+    cache: CorpusCache,
+    records: list[dict[str, Any]],
+    *,
+    include_cached_fulltext: bool,
+) -> list[dict[str, Any]]:
+    if include_cached_fulltext:
+        return records
+    return [
+        record
+        for record in records
+        if not cached_pmc_xml_exists(cache, record.get("pmc_id"))
+    ]
+
+
+def read_queue(
+    cache: CorpusCache,
+    *,
+    include_cached_fulltext: bool = False,
+    refresh: bool = False,
+) -> list[dict[str, Any]]:
     queue_path = cache.root / "reports" / "acquisition_queue.jsonl"
-    if not queue_path.exists():
+    if refresh or not queue_path.exists():
         documents = cache.read_documents()
-        write_acquisition_queue(documents, queue_path)
-    return cache.read_jsonl("reports/acquisition_queue.jsonl")
+        write_acquisition_queue(
+            documents,
+            queue_path,
+            cache=cache,
+            include_cached_fulltext=include_cached_fulltext,
+        )
+    return _filter_cached_fulltext_records(
+        cache,
+        cache.read_jsonl("reports/acquisition_queue.jsonl"),
+        include_cached_fulltext=include_cached_fulltext,
+    )
 
 
-def export_review_csv(cache: CorpusCache, output_path: Path) -> int:
+def export_review_csv(
+    cache: CorpusCache,
+    output_path: Path,
+    *,
+    include_cached_fulltext: bool = False,
+    refresh_queue: bool = False,
+) -> int:
     """Write a spreadsheet-friendly review file from the acquisition queue."""
-    records = read_queue(cache)
+    records = read_queue(
+        cache,
+        include_cached_fulltext=include_cached_fulltext,
+        refresh=refresh_queue,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         "document_id",
@@ -166,10 +221,168 @@ def register_manual_asset(
     return record
 
 
+def read_batch_manifest(manifest_path: Path) -> list[dict[str, Any]]:
+    """Read a CSV or JSONL manifest for batch manual-asset registration."""
+    suffix = manifest_path.suffix.lower()
+    if suffix == ".csv":
+        with open(manifest_path, newline="") as handle:
+            return [dict(row) for row in csv.DictReader(handle)]
+
+    if suffix in {".jsonl", ".ndjson"}:
+        rows: list[dict[str, Any]] = []
+        with open(manifest_path) as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    raise ValueError(f"Manifest line {line_number} must be a JSON object")
+                rows.append(row)
+        return rows
+
+    raise ValueError("Batch manifest must be .csv, .jsonl, or .ndjson")
+
+
+def write_batch_template(output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=BATCH_FIELDS)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "file": "/path/to/downloaded/article.pdf",
+                "document_id": "pmid:12345678",
+                "access_method": "imperial-library",
+                "access_status": "licensed-access",
+                "source_url": "https://doi.org/10.1000/example",
+                "license": "licensed-access",
+                "terms_note": "Imperial library access for internal project use",
+                "acquired_by": "authorized lab member",
+                "sensitivity": "licensed",
+                "retention_policy": "internal-project-storage",
+                "owner": "",
+                "notes": "",
+            }
+        )
+
+
+def _row_value(row: dict[str, Any], key: str, default: str | None = None) -> str | None:
+    value = row.get(key)
+    if value is None:
+        return default
+    value = str(value).strip()
+    return value or default
+
+
+def register_manual_assets_from_manifest(
+    cache: CorpusCache,
+    *,
+    manifest_path: Path,
+    base_dir: Path | None = None,
+    default_access_method: str | None = None,
+    default_access_status: str = "licensed-access",
+    default_sensitivity: str = "licensed",
+    default_retention_policy: str = "internal-project-storage",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Register many manually acquired assets from a CSV/JSONL manifest."""
+    rows = read_batch_manifest(manifest_path)
+    base = base_dir or manifest_path.parent
+    registered: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+
+    for index, row in enumerate(rows, start=1):
+        file_value = _row_value(row, "file") or _row_value(row, "file_path") or _row_value(row, "path")
+        document_id = _row_value(row, "document_id")
+        if not file_value or not document_id:
+            errors.append(
+                {
+                    "row": index,
+                    "error": "missing_required_field",
+                    "message": "Each row must include file and document_id",
+                }
+            )
+            continue
+
+        file_path = Path(file_value).expanduser()
+        if not file_path.is_absolute():
+            file_path = base / file_path
+
+        access_method = _row_value(row, "access_method", default_access_method)
+        if not access_method:
+            errors.append(
+                {
+                    "row": index,
+                    "file": str(file_path),
+                    "document_id": document_id,
+                    "error": "missing_access_method",
+                    "message": "Each row needs access_method or --default-access-method",
+                }
+            )
+            continue
+
+        try:
+            if dry_run:
+                ensure_allowed_access_method(access_method)
+                if not file_path.is_file():
+                    raise FileNotFoundError(file_path)
+                registered.append(
+                    {
+                        "row": index,
+                        "document_id": document_id,
+                        "file": str(file_path),
+                        "dry_run": True,
+                    }
+                )
+                continue
+
+            record = register_manual_asset(
+                cache,
+                file_path=file_path,
+                document_id=document_id,
+                access_status=_row_value(row, "access_status", default_access_status) or default_access_status,
+                access_method=access_method,
+                source_url=_row_value(row, "source_url"),
+                license=_row_value(row, "license"),
+                terms_note=_row_value(row, "terms_note"),
+                acquired_by=_row_value(row, "acquired_by"),
+                sensitivity=_row_value(row, "sensitivity", default_sensitivity) or default_sensitivity,
+                retention_policy=_row_value(row, "retention_policy", default_retention_policy)
+                or default_retention_policy,
+                owner=_row_value(row, "owner"),
+                notes=_row_value(row, "notes"),
+            )
+            registered.append({"row": index, **record})
+        except Exception as exc:
+            errors.append(
+                {
+                    "row": index,
+                    "file": str(file_path),
+                    "document_id": document_id,
+                    "error": type(exc).__name__,
+                    "message": str(exc),
+                }
+            )
+
+    return {
+        "registered": len(registered),
+        "failed": len(errors),
+        "records": registered,
+        "errors": errors,
+        "dry_run": dry_run,
+        "guidance": acquisition_guidance(),
+    }
+
+
 def _cmd_export_review(args: argparse.Namespace) -> None:
     cache = CorpusCache.open(args.cache)
     output = Path(args.output) if args.output else cache.root / "acquisition" / "review_queue.csv"
-    count = export_review_csv(cache, output)
+    count = export_review_csv(
+        cache,
+        output,
+        include_cached_fulltext=args.include_cached_fulltext,
+        refresh_queue=args.refresh_queue,
+    )
     print(json.dumps({"records": count, "output": str(output), "guidance": acquisition_guidance()}))
 
 
@@ -193,6 +406,26 @@ def _cmd_register_asset(args: argparse.Namespace) -> None:
     print(json.dumps(record, indent=2, sort_keys=True))
 
 
+def _cmd_register_batch(args: argparse.Namespace) -> None:
+    cache = CorpusCache.open(args.cache)
+    result = register_manual_assets_from_manifest(
+        cache,
+        manifest_path=Path(args.manifest),
+        base_dir=Path(args.base_dir) if args.base_dir else None,
+        default_access_method=args.default_access_method,
+        default_access_status=args.default_access_status,
+        default_sensitivity=args.default_sensitivity,
+        default_retention_policy=args.default_retention_policy,
+        dry_run=args.dry_run,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+
+
+def _cmd_batch_template(args: argparse.Namespace) -> None:
+    write_batch_template(Path(args.output))
+    print(json.dumps({"output": args.output, "fields": BATCH_FIELDS}))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Credential-free full-text acquisition workflow")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -200,6 +433,12 @@ def main() -> None:
     review = subparsers.add_parser("export-review", help="Export acquisition queue for manual review")
     review.add_argument("--cache", required=True)
     review.add_argument("--output")
+    review.add_argument("--refresh-queue", action="store_true", help="Regenerate reports/acquisition_queue.jsonl before exporting")
+    review.add_argument(
+        "--include-cached-fulltext",
+        action="store_true",
+        help="Include documents whose PMC XML is already cached under raw/pmc/xml",
+    )
     review.set_defaults(func=_cmd_export_review)
 
     register = subparsers.add_parser("register-asset", help="Register a manually acquired full-text file")
@@ -217,6 +456,21 @@ def main() -> None:
     register.add_argument("--owner")
     register.add_argument("--notes")
     register.set_defaults(func=_cmd_register_asset)
+
+    batch = subparsers.add_parser("register-batch", help="Register manually acquired full-text files from CSV/JSONL")
+    batch.add_argument("--cache", required=True)
+    batch.add_argument("--manifest", required=True)
+    batch.add_argument("--base-dir", help="Resolve relative manifest file paths from this directory; defaults to manifest directory")
+    batch.add_argument("--default-access-method", choices=sorted(LICENSED_ACCESS_METHODS))
+    batch.add_argument("--default-access-status", default="licensed-access")
+    batch.add_argument("--default-sensitivity", default="licensed", choices=sorted(SENSITIVITY_VALUES))
+    batch.add_argument("--default-retention-policy", default="internal-project-storage")
+    batch.add_argument("--dry-run", action="store_true", help="Validate manifest rows without copying or recording assets")
+    batch.set_defaults(func=_cmd_register_batch)
+
+    template = subparsers.add_parser("batch-template", help="Write a CSV template for register-batch")
+    template.add_argument("--output", required=True)
+    template.set_defaults(func=_cmd_batch_template)
 
     args = parser.parse_args()
     args.func(args)

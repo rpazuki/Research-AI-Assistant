@@ -82,7 +82,7 @@ def _json_default(value: Any) -> str:
 
 def _parse_datetime(value: str | None) -> datetime:
     if not value:
-        return datetime.utcnow()
+        return utc_now()
     normalized = value.replace("Z", "+00:00")
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is not None:
@@ -254,6 +254,54 @@ class CorpusCache:
                 if line.strip():
                     records.append(json.loads(line))
         return records
+
+    def count_jsonl(self, relative_path: str | Path) -> int:
+        path = self.root / relative_path
+        if not path.exists():
+            return 0
+        count = 0
+        with open(path) as handle:
+            for line in handle:
+                if line.strip():
+                    count += 1
+        return count
+
+    def refresh_counts_from_artifacts(self) -> None:
+        """Refresh manifest counts from accumulated cache artifacts.
+
+        This keeps a reused cache directory honest after append-style runs.
+        """
+        if self.manifest is None:
+            self.manifest = self.read_manifest()
+
+        pmids: set[str] = set()
+        documents_path = self.root / "normalized/documents.jsonl"
+        if documents_path.exists():
+            with open(documents_path) as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    record = json.loads(line)
+                    pmid = record.get("pmid")
+                    if pmid:
+                        pmids.add(str(pmid))
+
+        raw_records = (
+            len(list((self.root / "raw/pubmed/efetch").glob("*.xml")))
+            + len(list((self.root / "raw/pmc/xml").glob("*.xml")))
+            + len(list((self.root / "raw/pdf/extracted").glob("*.txt")))
+            + len(list((self.root / "raw/lab/extracted").glob("*.txt")))
+        )
+        self.manifest.counts.update(
+            {
+                "pmids": len(pmids),
+                "raw_records": raw_records,
+                "normalized_documents": self.count_jsonl("normalized/documents.jsonl"),
+                "chunks": self.count_jsonl("chunks/chunks.jsonl"),
+                "errors": self.count_jsonl("normalized/documents.errors.jsonl"),
+            }
+        )
+        self.write_manifest()
 
     def write_bytes(self, relative_path: str | Path, content: bytes) -> Path:
         path = self.root / relative_path
@@ -522,13 +570,20 @@ def create_cache_from_config(
 def write_acquisition_queue(
     documents: Iterable[NormalizedDocument],
     output_path: Path,
+    *,
+    cache: CorpusCache | None = None,
+    include_cached_fulltext: bool = False,
 ) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     seen: set[tuple[str, str]] = set()
     with open(output_path, "w") as handle:
         for doc in documents:
-            candidates = full_text_candidates(doc)
+            candidates = full_text_candidates(
+                doc,
+                cache=cache,
+                include_cached_fulltext=include_cached_fulltext,
+            )
             for candidate in candidates:
                 key = (candidate["document_id"], candidate["route"])
                 if key in seen:
@@ -540,17 +595,43 @@ def write_acquisition_queue(
     return count
 
 
-def full_text_candidates(doc: NormalizedDocument) -> list[dict[str, Any]]:
+def _safe_pmc_id(pmc_id: str) -> str:
+    clean = pmc_id.strip()
+    if clean.upper().startswith("PMC"):
+        return f"PMC{clean[3:]}"
+    return f"PMC{clean}"
+
+
+def cached_pmc_xml_exists(cache: CorpusCache | None, pmc_id: str | None) -> bool:
+    if cache is None or not pmc_id:
+        return False
+    return (cache.root / "raw" / "pmc" / "xml" / f"{_safe_pmc_id(str(pmc_id))}.xml").exists()
+
+
+def full_text_candidates(
+    doc: NormalizedDocument,
+    *,
+    cache: CorpusCache | None = None,
+    include_cached_fulltext: bool = False,
+) -> list[dict[str, Any]]:
+    if (
+        doc.pmc_id
+        and not include_cached_fulltext
+        and cached_pmc_xml_exists(cache, doc.pmc_id)
+    ):
+        return []
+
     candidates: list[dict[str, Any]] = []
     if doc.pmc_id:
+        safe_pmc_id = _safe_pmc_id(doc.pmc_id)
         candidates.append(
             {
                 "document_id": doc.document_id,
                 "pmid": doc.pmid,
-                "pmc_id": doc.pmc_id,
+                "pmc_id": safe_pmc_id,
                 "doi": doc.doi,
-                "candidate_url": f"https://www.ncbi.nlm.nih.gov/pmc/articles/{doc.pmc_id}/",
-                "candidate_pdf_url": f"https://www.ncbi.nlm.nih.gov/pmc/articles/{doc.pmc_id}/pdf/",
+                "candidate_url": f"https://pmc.ncbi.nlm.nih.gov/articles/{safe_pmc_id}/",
+                "candidate_pdf_url": f"https://pmc.ncbi.nlm.nih.gov/articles/{safe_pmc_id}/pdf/",
                 "route": "pmcid",
                 "access_status": "open-access-candidate",
                 "priority": "high",

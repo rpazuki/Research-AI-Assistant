@@ -1,0 +1,11 @@
+# RLALab corpus configuration
+# Edit query and date range to tune the ingestion scope.
+# Commit this file; secrets (NCBI_EMAIL, NCBI_API_KEY) stay in .env.
+
+[corpus]
+name            = "rlalab-pubmed-v1"
+source          = "pdf"          # 'pubmed_abstract' | 'pmc_fulltext' | 'pdf'
+embedding_model = "pubmedbert"               # 'pubmedbert' | 'minilm'
+
+[pdf]
+dir = "./data/pdfs"

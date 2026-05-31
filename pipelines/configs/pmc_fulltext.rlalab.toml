@@ -1,0 +1,19 @@
+# RLALab corpus configuration
+# Edit query and date range to tune the ingestion scope.
+# Commit this file; secrets (NCBI_EMAIL, NCBI_API_KEY) stay in .env.
+
+[corpus]
+name            = "rlalab-pubmed-v1"
+source          = "pmc_fulltext"          # 'pubmed_abstract' | 'pmc_fulltext' | 'pdf'
+embedding_model = "pubmedbert"               # 'pubmedbert' | 'minilm'
+
+[pmc]
+# Accepts PMCIDs, PMIDs, or DOIs. PMIDs are resolved to PMCIDs through the PMC ID Converter API.
+# ids = ["41812577", "41028461"]
+from_cached_pubmed_documents = true
+sleep_between_batches_s = 1.0
+
+[indexing]
+# Full-text chunks are much larger than abstracts; keep embedding batches small,
+# especially on Apple MPS where BERT attention memory grows quickly.
+embedding_batch_size = 1

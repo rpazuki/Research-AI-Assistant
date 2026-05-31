@@ -8,7 +8,11 @@ This is the contract between ingestion and indexing.
 """
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 @dataclass
@@ -51,7 +55,7 @@ class NormalizedDocument:
     keywords: list[str] = field(default_factory=list)
     url: str | None = None
     license: str | None = None
-    ingested_at: datetime = field(default_factory=datetime.utcnow)
+    ingested_at: datetime = field(default_factory=utc_now)
     metadata: dict = field(default_factory=dict)
 
     def text_for_indexing(self, mode: str = "abstract") -> str:
