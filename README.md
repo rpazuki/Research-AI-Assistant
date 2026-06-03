@@ -189,16 +189,28 @@ npm run dev
 
 **Terminal 3 — Database** (if using Docker)
 ```bash
-docker compose up db
+docker compose up -d --build db
 ```
 
 API docs available at: `http://localhost:8000/api/docs`
+
+
+**Terminal 4 — dev on Docker and frontend on local** (if using Docker)
+```bash
+docker compose up -d db backend ingestion-worker
+cd frontend
+npm run dev -- --hostname 0.0.0.0
+```
 
 Notes:
 
 - The first backend startup downloads the PubMedBERT checkpoint (~440 MB) into `backend/model_cache` unless it is already cached.
 - Backend startup currently preloads the embedding model. The verified local-compatible stack is `torch 2.2.x` plus `transformers 4.51.x`; if startup fails with a `torch.load` safety error, rerun `pip install -e ".[dev]" --upgrade` from `backend/`.
 - The frontend expects the backend at `http://localhost:8000` unless `NEXT_PUBLIC_API_URL` is overridden.
+- To watch the ingestion worker, run
+```bash
+docker compose logs -f ingestion-worker
+```
 
 ## Tests
 

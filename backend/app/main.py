@@ -24,12 +24,6 @@ async def lifespan(app: FastAPI):
     os.environ.setdefault("TOKENIZERS_PARALLELISM", settings.tokenizers_parallelism)
     configure_logging()
 
-    # Pre-load expensive singletons at startup so first request is fast.
-    from app.embeddings.registry import get_embedding_model
-    from app.providers.registry import get_llm_provider
-    get_embedding_model()  # loads model weights into memory
-    get_llm_provider()     # creates API client
-
     yield
     # Shutdown: nothing to clean up currently.
 

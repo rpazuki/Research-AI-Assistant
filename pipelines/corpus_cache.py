@@ -172,6 +172,15 @@ class CorpusCache:
         manifest: CorpusManifest,
     ) -> "CorpusCache":
         root = Path(base_dir) / manifest.corpus_name / manifest.run_id
+        return cls.create_at_root(root=root, manifest=manifest)
+
+    @classmethod
+    def create_at_root(
+        cls,
+        *,
+        root: str | Path,
+        manifest: CorpusManifest,
+    ) -> "CorpusCache":
         cache = cls(root=root, manifest=manifest)
         cache.ensure_layout()
         cache.write_manifest()
@@ -183,6 +192,18 @@ class CorpusCache:
         cache.manifest = cache.read_manifest()
         cache.ensure_layout()
         return cache
+
+    @classmethod
+    def open_or_create(
+        cls,
+        *,
+        root: str | Path,
+        manifest: CorpusManifest,
+    ) -> "CorpusCache":
+        root_path = Path(root)
+        if (root_path / "manifest.json").exists():
+            return cls.open(root_path)
+        return cls.create_at_root(root=root_path, manifest=manifest)
 
     def ensure_layout(self) -> None:
         for relative in [

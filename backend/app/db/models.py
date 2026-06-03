@@ -55,6 +55,8 @@ class User(Base):
     sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
     feedback = relationship("Feedback", back_populates="user", cascade="all, delete-orphan")
     sent_invitations = relationship("UserInvitation", back_populates="invited_by")
+    ingestion_jobs = relationship("IngestionJob", back_populates="requested_by")
+    ingestion_upload_batches = relationship("IngestionUploadBatch", back_populates="created_by")
 
 
 # ── User Invitations ──────────────────────────────────────────────────────────
@@ -97,6 +99,59 @@ class IngestionManifest(Base):
 
     documents = relationship("Document", back_populates="manifest")
     chunks = relationship("DocumentChunk", back_populates="manifest")
+
+
+# ── Ingestion Operations ─────────────────────────────────────────────────────
+
+class IngestionUploadBatch(Base):
+    __tablename__ = "ingestion_upload_batches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    name = Column(String, nullable=False)
+    directory_path = Column(Text, nullable=False)
+    file_count = Column(Integer, nullable=False, default=0)
+    total_bytes = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    metadata_ = Column("metadata", JSONB)
+
+    created_by = relationship("User", back_populates="ingestion_upload_batches")
+    jobs = relationship("IngestionJob", back_populates="pdf_upload_batch")
+
+
+class IngestionJob(Base):
+    __tablename__ = "ingestion_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    requested_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    status = Column(String, nullable=False, default="queued", index=True)
+    config_name = Column(String, nullable=False)
+    config_path = Column(Text, nullable=False)
+    config_snapshot = Column(JSONB)
+    source = Column(String, nullable=False)
+    mode = Column(String, nullable=False, default="full")
+    from_date = Column(Date)
+    year = Column(Integer)
+    cache_path = Column(Text)
+    pdf_upload_batch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("ingestion_upload_batches.id", ondelete="SET NULL"),
+    )
+    options = Column(JSONB)
+    manifest_id = Column(UUID(as_uuid=True), ForeignKey("ingestion_manifests.id", ondelete="SET NULL"))
+    document_count = Column(Integer)
+    chunk_count = Column(Integer)
+    progress_message = Column(Text)
+    log_tail = Column(Text)
+    error = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    started_at = Column(DateTime(timezone=True))
+    finished_at = Column(DateTime(timezone=True))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+    requested_by = relationship("User", back_populates="ingestion_jobs")
+    manifest = relationship("IngestionManifest")
+    pdf_upload_batch = relationship("IngestionUploadBatch", back_populates="jobs")
 
 
 # ── Documents ─────────────────────────────────────────────────────────────────

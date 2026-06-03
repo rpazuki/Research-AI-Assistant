@@ -143,3 +143,34 @@ python -m pipelines.indexing.build_index \
 
 Use `--local-only` with `--cache` when the goal is to rebuild or generate
 reports from existing cache artifacts without downloading anything.
+
+
+## UI Run Modes
+
+**Full run** is the same as the original script default:
+
+```bash
+python -m pipelines.indexing.build_index --config pipelines/configs/...
+```
+
+It reads the selected approved config, fetches/loads the configured source, creates a new cache if needed, chunks, embeds, indexes, and records a manifest.
+
+**Incremental PubMed** update maps to the original --from-date option:
+
+```bash
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/pubmed_abstract.rlalab.toml \
+  --from-date 2026-05-01
+```
+
+It is only allowed for pubmed_abstract configs. The pipeline loads existing PMIDs from the DB and skips duplicates.
+
+**Single-year test** maps to the original --year option:
+
+```bash
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/pubmed_abstract.rlalab.toml \
+  --year 2024
+```
+
+It is also only allowed for pubmed_abstract configs. It overrides the configured year range just for that job.

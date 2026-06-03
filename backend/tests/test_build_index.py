@@ -4,6 +4,7 @@ from pipelines.indexing.build_index import (
     documents_from_cached_lab_text,
     documents_from_cached_pdf_text,
     load_pmc_ids,
+    open_or_create_cache_from_path,
     validate_index_embedding,
 )
 from pipelines.processing.normalizer import NormalizedDocument
@@ -31,6 +32,37 @@ def test_validate_index_embedding_rejects_non_matching_dimensions() -> None:
 
 def test_batched_splits_items_into_fixed_size_batches() -> None:
     assert list(batched([1, 2, 3, 4, 5], 2)) == [[1, 2], [3, 4], [5]]
+
+
+def test_open_or_create_cache_from_path_initializes_ui_default_cache(tmp_path) -> None:
+    config_path = tmp_path / "corpus.toml"
+    config_path.write_text(
+        """
+[corpus]
+name = "rlalab-pubmed-v1"
+source = "pubmed_abstract"
+embedding_model = "pubmedbert"
+
+[pubmed]
+query = "synthetic biology"
+year_from = 2000
+year_to = 2026
+
+[chunking]
+chunk_size = 512
+chunk_overlap = 64
+""".strip()
+    )
+    cache_path = tmp_path / "data" / "corpora" / "rlalab-pubmed-v1" / "cumulative"
+
+    cache = open_or_create_cache_from_path(config_path, cache_path)
+
+    assert cache.root == cache_path
+    assert cache.manifest is not None
+    assert cache.manifest.corpus_name == "rlalab-pubmed-v1"
+    assert cache.manifest.run_id == "cumulative"
+    assert (cache_path / "manifest.json").exists()
+    assert (cache_path / "config" / "corpus.toml").exists()
 
 
 def make_cache(tmp_path, source: str = "pdf") -> CorpusCache:

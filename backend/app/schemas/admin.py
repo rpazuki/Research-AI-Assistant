@@ -1,7 +1,7 @@
 """app/schemas/admin.py — Admin request/response schemas."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
@@ -51,3 +51,95 @@ class AdminUserSummary(BaseModel):
     token_limit: int
     token_limit_reached: bool = False
     usage: UserUsageSummary = Field(default_factory=UserUsageSummary)
+
+
+IngestionJobStatus = Literal[
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "cancel_requested",
+    "cancelled",
+]
+
+IngestionJobMode = Literal[
+    "full",
+    "incremental",
+    "test_year",
+    "local_only",
+    "queue_only",
+]
+
+
+class IngestionConfigSummary(BaseModel):
+    name: str
+    path: str
+    corpus_name: str
+    source: str
+    embedding_model: str
+    year_from: int | None = None
+    year_to: int | None = None
+    pdf_dir: str | None = None
+    supports_pdf_upload: bool = False
+
+
+class IngestionDefaultsResponse(BaseModel):
+    config_name: str = ""
+    mode: IngestionJobMode = "full"
+    cache_path: str = ""
+    write_acquisition_queue: bool = False
+    include_cached_fulltext: bool = False
+
+
+class IngestionWorkerStatusResponse(BaseModel):
+    active: bool
+    state: str
+    job_id: str | None = None
+    updated_at: datetime | None = None
+    seconds_since_heartbeat: int | None = None
+    message: str
+
+
+class IngestionUploadBatchResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    directory_path: str
+    file_count: int
+    total_bytes: int
+    created_at: datetime
+
+
+class IngestionJobCreate(BaseModel):
+    config_name: str = Field(min_length=1, max_length=200)
+    mode: IngestionJobMode = "full"
+    from_date: date | None = None
+    year: int | None = Field(default=None, ge=1900, le=2100)
+    cache_path: str | None = Field(default=None, max_length=2000)
+    pdf_upload_batch_id: uuid.UUID | None = None
+    write_acquisition_queue: bool = False
+    include_cached_fulltext: bool = False
+
+
+class IngestionJobResponse(BaseModel):
+    id: uuid.UUID
+    requested_by_user_id: uuid.UUID | None
+    status: IngestionJobStatus
+    config_name: str
+    config_path: str
+    source: str
+    mode: str
+    from_date: date | None
+    year: int | None
+    cache_path: str | None
+    pdf_upload_batch_id: uuid.UUID | None
+    options: dict | None = None
+    manifest_id: uuid.UUID | None
+    document_count: int | None
+    chunk_count: int | None
+    progress_message: str | None
+    log_tail: str | None
+    error: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    updated_at: datetime

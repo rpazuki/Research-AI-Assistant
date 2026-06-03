@@ -1,0 +1,31 @@
+.git
+.DS_Store
+
+# Local environments and caches
+.env
+*.env.local
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+.venv/
+venv/
+backend/.venv/
+backend/.venv-1/
+
+# Node build artifacts
+node_modules/
+frontend/node_modules/
+.next/
+frontend/.next/
+frontend/out/
+
+# Large runtime data
+data/
+model_cache/
+evaluation/reports/*.json
+evaluation/reports/*.jsonl
+
+# Local logs and generated metadata
+*.log

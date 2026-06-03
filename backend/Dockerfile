@@ -10,13 +10,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for fast dependency install
 RUN pip install uv
 
-COPY pyproject.toml .
+COPY backend/pyproject.toml .
+COPY backend/app/ ./app/
 RUN uv pip install --system -e .
 
-COPY . .
+COPY backend/ .
+COPY pipelines/ ./pipelines/
 
 # Model cache is expected to be mounted as a volume in production
 ENV EMBEDDING_CACHE_DIR=/app/model_cache
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 

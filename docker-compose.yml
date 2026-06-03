@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ── Postgres + pgvector ──────────────────────────────────────────────────
   db:
@@ -10,7 +8,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -22,10 +20,12 @@ services:
   # ── FastAPI backend ───────────────────────────────────────────────────────
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: rlalab_backend
     env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/rlalab_ai
     ports:
       - "8000:8000"
     depends_on:
@@ -33,7 +33,27 @@ services:
         condition: service_healthy
     volumes:
       - model_cache:/app/model_cache   # Persistent volume for embedding model weights
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      - corpus_data:/app/data           # Corpus caches, uploads, and ingestion artifacts
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  ingestion-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: rlalab_ingestion_worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/rlalab_ai
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - model_cache:/app/model_cache
+      - corpus_data:/app/data
+    command: python -m app.ingestion.worker
 
   # ── Next.js frontend ──────────────────────────────────────────────────────
   frontend:
@@ -51,3 +71,4 @@ services:
 volumes:
   pgdata:
   model_cache:
+  corpus_data:

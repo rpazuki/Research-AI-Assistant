@@ -37,6 +37,32 @@ def test_cache_layout_and_manifest_round_trip(tmp_path) -> None:
     assert CorpusCache.open(cache.root).manifest.corpus_name == "test-corpus"
 
 
+def test_open_or_create_initializes_exact_empty_root(tmp_path) -> None:
+    root = tmp_path / "test-corpus" / "cumulative"
+
+    cache = CorpusCache.open_or_create(root=root, manifest=make_manifest())
+
+    assert cache.root == root
+    assert cache.manifest is not None
+    assert cache.manifest.run_id == "2026-05-23T120000Z"
+    assert (root / "manifest.json").exists()
+    assert (root / "raw/pubmed/efetch").is_dir()
+
+
+def test_open_or_create_preserves_existing_manifest(tmp_path) -> None:
+    root = tmp_path / "test-corpus" / "cumulative"
+    existing = make_manifest()
+    existing.run_id = "existing"
+    CorpusCache.create_at_root(root=root, manifest=existing)
+
+    replacement = make_manifest()
+    replacement.run_id = "replacement"
+    cache = CorpusCache.open_or_create(root=root, manifest=replacement)
+
+    assert cache.manifest is not None
+    assert cache.manifest.run_id == "existing"
+
+
 def test_document_cache_record_round_trip() -> None:
     doc = NormalizedDocument(
         document_id="pmid:123",

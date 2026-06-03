@@ -25,6 +25,95 @@ export interface AdminUserSummary extends User {
   usage: UserUsageSummary;
 }
 
+export interface IngestionConfigSummary {
+  name: string;
+  path: string;
+  corpus_name: string;
+  source: string;
+  embedding_model: string;
+  year_from: number | null;
+  year_to: number | null;
+  pdf_dir: string | null;
+  supports_pdf_upload: boolean;
+}
+
+export interface IngestionDefaults {
+  config_name: string;
+  mode: IngestionJobMode;
+  cache_path: string;
+  write_acquisition_queue: boolean;
+  include_cached_fulltext: boolean;
+}
+
+export interface IngestionWorkerStatus {
+  active: boolean;
+  state: string;
+  job_id: string | null;
+  updated_at: string | null;
+  seconds_since_heartbeat: number | null;
+  message: string;
+}
+
+export interface IngestionUploadBatch {
+  id: string;
+  name: string;
+  directory_path: string;
+  file_count: number;
+  total_bytes: number;
+  created_at: string;
+}
+
+export type IngestionJobStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancel_requested"
+  | "cancelled";
+
+export type IngestionJobMode =
+  | "full"
+  | "incremental"
+  | "test_year"
+  | "local_only"
+  | "queue_only";
+
+export interface IngestionJob {
+  id: string;
+  requested_by_user_id: string | null;
+  status: IngestionJobStatus;
+  config_name: string;
+  config_path: string;
+  source: string;
+  mode: string;
+  from_date: string | null;
+  year: number | null;
+  cache_path: string | null;
+  pdf_upload_batch_id: string | null;
+  options: Record<string, unknown> | null;
+  manifest_id: string | null;
+  document_count: number | null;
+  chunk_count: number | null;
+  progress_message: string | null;
+  log_tail: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+}
+
+export interface IngestionJobCreate {
+  config_name: string;
+  mode: IngestionJobMode;
+  from_date?: string | null;
+  year?: number | null;
+  cache_path?: string | null;
+  pdf_upload_batch_id?: string | null;
+  write_acquisition_queue?: boolean;
+  include_cached_fulltext?: boolean;
+}
+
 export interface InvitationSendItem {
   email: string;
   status: "sent" | "failed";

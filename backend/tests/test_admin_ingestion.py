@@ -1,0 +1,515 @@
+import asyncio
+import uuid
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+
+import httpx
+import pytest
+from fastapi import HTTPException
+
+from app.api import deps
+from app.db.models import User
+from app.ingestion.admin_service import (
+    APPROVED_CONFIG_DIR,
+    get_worker_status,
+    get_approved_config,
+    list_approved_configs,
+    load_ingestion_defaults,
+    validate_cache_path,
+    write_worker_heartbeat,
+)
+from app.ingestion.worker import (
+    append_log,
+    dump_toml_sections,
+    format_toml_value,
+    maintain_running_heartbeat,
+    run_job,
+)
+from app.main import app
+
+
+def make_admin(role: str = "admin") -> User:
+    return User(
+        id=uuid.uuid4(),
+        email=f"{role}@example.com",
+        hashed_password="hashed",
+        full_name="Admin",
+        role=role,
+        is_active=True,
+        token_limit=1_000_000,
+    )
+
+
+class DummyDB:
+    pass
+
+
+class FakeWorkerSession:
+    def __init__(self, job):
+        self.job = job
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def begin(self):
+        return self
+
+    async def get(self, _model, _job_id):
+        return self.job
+
+
+def fake_worker_session_factory(job):
+    return lambda: FakeWorkerSession(job)
+
+
+@asynccontextmanager
+async def make_client(user: User):
+    async def override_current_user():
+        return user
+
+    async def override_db():
+        yield DummyDB()
+
+    app.dependency_overrides[deps.get_current_user] = override_current_user
+    app.dependency_overrides[deps.get_db] = override_db
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_lists_only_approved_ingestion_configs() -> None:
+    configs = list_approved_configs()
+
+    assert configs
+    assert all(Path(config["path"]).parent == APPROVED_CONFIG_DIR for config in configs)
+    assert {config["name"] for config in configs} >= {
+        "pubmed_abstract.rlalab.toml",
+        "pdf.rlalab.toml",
+    }
+    assert "admin_ingestion_defaults.toml" not in {config["name"] for config in configs}
+
+
+def test_loads_committed_ingestion_defaults() -> None:
+    defaults = load_ingestion_defaults()
+
+    assert defaults["config_name"] == "pubmed_abstract.rlalab.toml"
+    assert defaults["mode"] == "full"
+    assert defaults["cache_path"] == "data/corpora/rlalab-pubmed-v1/cumulative"
+    assert defaults["write_acquisition_queue"] is False
+
+
+def test_worker_status_reports_missing_heartbeat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    heartbeat_path = tmp_path / "worker_heartbeat.json"
+    monkeypatch.setattr("app.ingestion.admin_service.WORKER_HEARTBEAT_PATH", heartbeat_path)
+
+    status = get_worker_status()
+
+    assert status["active"] is False
+    assert status["state"] == "not_seen"
+
+
+def test_worker_status_reports_current_heartbeat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    heartbeat_path = tmp_path / "worker_heartbeat.json"
+    monkeypatch.setattr("app.ingestion.admin_service.WORKER_HEARTBEAT_PATH", heartbeat_path)
+
+    write_worker_heartbeat(state="polling")
+    status = get_worker_status()
+
+    assert status["active"] is True
+    assert status["state"] == "polling"
+
+
+def test_rejects_unapproved_ingestion_config_path() -> None:
+    with pytest.raises(HTTPException):
+        get_approved_config("../secrets.toml")
+
+
+def test_restricts_cache_paths_to_corpus_data() -> None:
+    resolved = validate_cache_path("data/corpora/rlalab-pubmed-v1/cumulative")
+
+    assert resolved is not None
+    assert resolved.endswith("data/corpora/rlalab-pubmed-v1/cumulative")
+
+    with pytest.raises(HTTPException):
+        validate_cache_path("/tmp/not-an-approved-cache")
+
+
+def test_dump_toml_sections_preserves_known_config_shape() -> None:
+    text = dump_toml_sections(
+        {
+            "corpus": {"name": "rlalab-pubmed-v1", "source": "pdf"},
+            "pdf": {"dir": "./data/pdfs"},
+            "indexing": {"embedding_batch_size": 1},
+        }
+    )
+
+    assert '[corpus]\nname = "rlalab-pubmed-v1"\nsource = "pdf"' in text
+    assert '[pdf]\ndir = "./data/pdfs"' in text
+    assert "[indexing]\nembedding_batch_size = 1" in text
+
+
+def test_worker_toml_value_formatter_handles_config_primitives() -> None:
+    assert format_toml_value("Yarrowia") == '"Yarrowia"'
+    assert format_toml_value(True) == "true"
+    assert format_toml_value(["PMC1", "PMC2"]) == '["PMC1", "PMC2"]'
+
+
+def test_worker_log_tail_trims_old_content() -> None:
+    existing = "x" * 20
+    value = append_log(existing, "new event", limit=12)
+
+    assert value.endswith("new event")
+    assert len(value) == 12
+
+
+@pytest.mark.asyncio
+async def test_worker_maintains_heartbeat_during_long_running_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = uuid.uuid4()
+    heartbeats: list[tuple[str, uuid.UUID | None]] = []
+
+    def fake_write_worker_heartbeat(*, state: str, job_id: uuid.UUID | None = None) -> None:
+        heartbeats.append((state, job_id))
+
+    monkeypatch.setattr("app.ingestion.worker.write_worker_heartbeat", fake_write_worker_heartbeat)
+
+    task = asyncio.create_task(maintain_running_heartbeat(job_id, interval_s=0.01))
+    await asyncio.sleep(0.035)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(heartbeats) >= 3
+    assert all(state == "running" for state, _ in heartbeats)
+    assert all(seen_job_id == job_id for _, seen_job_id in heartbeats)
+
+
+@pytest.mark.asyncio
+async def test_worker_run_job_marks_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = uuid.uuid4()
+    manifest_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        config_snapshot={"corpus": {"name": "test", "source": "pdf"}, "pdf": {"dir": "./data/pdfs"}},
+        mode="full",
+        from_date=None,
+        year=None,
+        options={},
+        cache_path=None,
+        status="running",
+        progress_message="Worker started",
+        log_tail=None,
+        manifest_id=None,
+        document_count=None,
+        chunk_count=None,
+        finished_at=None,
+    )
+
+    async def fake_build_index(config_path, **kwargs):
+        assert Path(config_path).exists()
+        await kwargs["progress_callback"](
+            "Processed 100 documents",
+            {"document_count": 100, "chunk_count": 150},
+        )
+        return {
+            "manifest_id": str(manifest_id),
+            "document_count": 100,
+            "chunk_count": 150,
+            "cache_path": "/app/data/corpora/test/run",
+        }
+
+    monkeypatch.setattr("app.ingestion.worker.JOB_WORK_ROOT", tmp_path)
+    monkeypatch.setattr("app.ingestion.worker.AsyncSessionLocal", fake_worker_session_factory(job))
+    monkeypatch.setattr("app.ingestion.worker.build_index", fake_build_index)
+
+    await run_job(job_id)
+
+    assert job.status == "succeeded"
+    assert job.manifest_id == manifest_id
+    assert job.document_count == 100
+    assert job.chunk_count == 150
+    assert job.cache_path == "/app/data/corpora/test/run"
+    assert job.finished_at is not None
+
+
+@pytest.mark.asyncio
+async def test_worker_run_job_marks_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    job_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        config_snapshot={"corpus": {"name": "test", "source": "pdf"}, "pdf": {"dir": "./data/pdfs"}},
+        mode="full",
+        from_date=None,
+        year=None,
+        options={},
+        cache_path=None,
+        status="running",
+        progress_message="Worker started",
+        log_tail=None,
+        error=None,
+        finished_at=None,
+    )
+
+    async def fake_build_index(*_args, **_kwargs):
+        raise RuntimeError("embedding model unavailable")
+
+    monkeypatch.setattr("app.ingestion.worker.JOB_WORK_ROOT", tmp_path)
+    monkeypatch.setattr("app.ingestion.worker.AsyncSessionLocal", fake_worker_session_factory(job))
+    monkeypatch.setattr("app.ingestion.worker.build_index", fake_build_index)
+
+    await run_job(job_id)
+
+    assert job.status == "failed"
+    assert job.error == "embedding model unavailable"
+    assert job.progress_message == "Failed"
+    assert job.finished_at is not None
+
+
+@pytest.mark.asyncio
+async def test_ingestion_configs_endpoint_requires_admin() -> None:
+    async with make_client(make_admin(role="researcher")) as client:
+        response = await client.get("/api/v1/admin/ingestion/configs")
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_ingestion_configs_endpoint_returns_approved_configs() -> None:
+    async with make_client(make_admin()) as client:
+        response = await client.get("/api/v1/admin/ingestion/configs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {item["name"] for item in body} >= {
+        "pubmed_abstract.rlalab.toml",
+        "pdf.rlalab.toml",
+    }
+    assert "admin_ingestion_defaults.toml" not in {item["name"] for item in body}
+    assert all(item["path"].endswith(f"pipelines/configs/{item['name']}") for item in body)
+
+
+@pytest.mark.asyncio
+async def test_ingestion_defaults_endpoint_returns_prefill_values() -> None:
+    async with make_client(make_admin()) as client:
+        response = await client.get("/api/v1/admin/ingestion/defaults")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "config_name": "pubmed_abstract.rlalab.toml",
+        "mode": "full",
+        "cache_path": "data/corpora/rlalab-pubmed-v1/cumulative",
+        "write_acquisition_queue": False,
+        "include_cached_fulltext": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ingestion_worker_endpoint_returns_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.api.routes.admin.get_worker_status",
+        lambda: {
+            "active": False,
+            "state": "not_seen",
+            "job_id": None,
+            "updated_at": None,
+            "seconds_since_heartbeat": None,
+            "message": "No ingestion worker heartbeat has been seen.",
+        },
+    )
+
+    async with make_client(make_admin()) as client:
+        response = await client.get("/api/v1/admin/ingestion/worker")
+
+    assert response.status_code == 200
+    assert response.json()["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_ingestion_job_rejects_unapproved_config() -> None:
+    async with make_client(make_admin()) as client:
+        response = await client.post(
+            "/api/v1/admin/ingestion/jobs",
+            json={"config_name": "../secret.toml", "mode": "full"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unknown ingestion config"
+
+
+@pytest.mark.asyncio
+async def test_create_ingestion_job_validates_mode_specific_fields() -> None:
+    async with make_client(make_admin()) as client:
+        incremental = await client.post(
+            "/api/v1/admin/ingestion/jobs",
+            json={"config_name": "pubmed_abstract.rlalab.toml", "mode": "incremental"},
+        )
+        local_only = await client.post(
+            "/api/v1/admin/ingestion/jobs",
+            json={"config_name": "pubmed_abstract.rlalab.toml", "mode": "local_only"},
+        )
+
+    assert incremental.status_code == 400
+    assert incremental.json()["detail"] == "from_date is required"
+    assert local_only.status_code == 400
+    assert "cache_path is required" in local_only.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_create_ingestion_job_persists_valid_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    admin = make_admin()
+    created_jobs: list[dict] = []
+
+    async def fake_create_ingestion_job(_db, **kwargs):
+        created_jobs.append(kwargs)
+        return SimpleNamespace(
+            id=uuid.uuid4(),
+            requested_by_user_id=kwargs["requested_by_user_id"],
+            status="queued",
+            config_name=kwargs["config_name"],
+            config_path=kwargs["config_path"],
+            source=kwargs["source"],
+            mode=kwargs["mode"],
+            from_date=kwargs["from_date"],
+            year=kwargs["year"],
+            cache_path=kwargs["cache_path"],
+            pdf_upload_batch_id=kwargs["pdf_upload_batch_id"],
+            options=kwargs["options"],
+            manifest_id=None,
+            document_count=None,
+            chunk_count=None,
+            progress_message="Queued",
+            log_tail=None,
+            error=None,
+            created_at=datetime(2026, 5, 31, tzinfo=timezone.utc),
+            started_at=None,
+            finished_at=None,
+            updated_at=datetime(2026, 5, 31, tzinfo=timezone.utc),
+        )
+
+    monkeypatch.setattr("app.db.crud.create_ingestion_job", fake_create_ingestion_job)
+
+    async with make_client(admin) as client:
+        response = await client.post(
+            "/api/v1/admin/ingestion/jobs",
+            json={
+                "config_name": "pubmed_abstract.rlalab.toml",
+                "mode": "incremental",
+                "from_date": "2026-05-01",
+                "write_acquisition_queue": True,
+            },
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "queued"
+    assert body["mode"] == "incremental"
+    assert created_jobs[0]["requested_by_user_id"] == admin.id
+    assert created_jobs[0]["from_date"] == date(2026, 5, 1)
+    assert created_jobs[0]["options"]["write_acquisition_queue"] is True
+
+
+@pytest.mark.asyncio
+async def test_pdf_upload_endpoint_stages_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    admin = make_admin()
+
+    async def fake_save_pdf_upload_folder(files, *, batch_id):
+        assert batch_id
+        assert len(files) == 2
+        return Path("/tmp/uploaded-pdfs"), 2, 1234
+
+    async def fake_create_ingestion_upload_batch(_db, **kwargs):
+        return SimpleNamespace(
+            id=kwargs["upload_batch_id"],
+            name=kwargs["name"],
+            directory_path=kwargs["directory_path"],
+            file_count=kwargs["file_count"],
+            total_bytes=kwargs["total_bytes"],
+            created_at=datetime(2026, 5, 31, tzinfo=timezone.utc),
+        )
+
+    monkeypatch.setattr("app.api.routes.admin.save_pdf_upload_folder", fake_save_pdf_upload_folder)
+    monkeypatch.setattr(
+        "app.db.crud.create_ingestion_upload_batch",
+        fake_create_ingestion_upload_batch,
+    )
+
+    files = [
+        ("files", ("folder/one.pdf", b"%PDF-1.4 one", "application/pdf")),
+        ("files", ("folder/two.pdf", b"%PDF-1.4 two", "application/pdf")),
+    ]
+    async with make_client(admin) as client:
+        response = await client.post(
+            "/api/v1/admin/ingestion/pdf-upload-folders",
+            data={"name": "Manual batch"},
+            files=files,
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "Manual batch"
+    assert body["file_count"] == 2
+    assert body["total_bytes"] == 1234
+
+
+@pytest.mark.asyncio
+async def test_cancel_ingestion_job_updates_queued_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    job_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        requested_by_user_id=uuid.uuid4(),
+        status="queued",
+        config_name="pubmed_abstract.rlalab.toml",
+        config_path="/app/pipelines/configs/pubmed_abstract.rlalab.toml",
+        source="pubmed_abstract",
+        mode="full",
+        from_date=None,
+        year=None,
+        cache_path=None,
+        pdf_upload_batch_id=None,
+        options={},
+        manifest_id=None,
+        document_count=None,
+        chunk_count=None,
+        progress_message="Queued",
+        log_tail=None,
+        error=None,
+        created_at=datetime(2026, 5, 31, tzinfo=timezone.utc),
+        started_at=None,
+        finished_at=None,
+        updated_at=datetime(2026, 5, 31, tzinfo=timezone.utc),
+    )
+
+    async def fake_get_ingestion_job(_db, requested_job_id):
+        assert requested_job_id == job_id
+        return job
+
+    async def fake_cancel(_db, target_job, now):
+        target_job.status = "cancelled"
+        target_job.finished_at = now
+        target_job.progress_message = "Cancelled before worker picked it up"
+        return target_job
+
+    monkeypatch.setattr("app.db.crud.get_ingestion_job", fake_get_ingestion_job)
+    monkeypatch.setattr("app.db.crud.request_ingestion_job_cancel", fake_cancel)
+
+    async with make_client(make_admin()) as client:
+        response = await client.post(f"/api/v1/admin/ingestion/jobs/{job_id}/cancel")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "cancelled"
+    assert "Cancelled" in body["progress_message"]

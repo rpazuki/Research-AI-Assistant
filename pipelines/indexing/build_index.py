@@ -31,6 +31,7 @@ IMPORTANT after first load:
 
 import argparse
 import asyncio
+import inspect
 import json
 import logging
 import sys
@@ -38,6 +39,7 @@ import uuid
 from datetime import date, datetime, timezone
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import Any, Callable
 
 # Allow running as a module from the pipelines/ directory
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -53,6 +55,7 @@ from pipelines.ingestion.lab_sources import (
 )
 from pipelines.corpus_cache import (
     CorpusCache,
+    CorpusManifest,
     create_cache_from_config,
     load_toml,
     write_acquisition_queue,
@@ -67,6 +70,20 @@ logger = logging.getLogger(__name__)
 LOCAL_TEXT_SOURCES = {"lab_protocols"}
 LOCAL_TABLE_SOURCES = {"eln_lims", "inventories", "omics_summaries"}
 LOCAL_LAB_SOURCES = LOCAL_TEXT_SOURCES | LOCAL_TABLE_SOURCES
+
+ProgressCallback = Callable[[str, dict[str, Any] | None], Any]
+
+
+async def notify_progress(
+    progress_callback: ProgressCallback | None,
+    message: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    if progress_callback is None:
+        return
+    result = progress_callback(message, payload or {})
+    if inspect.isawaitable(result):
+        await result
 
 
 async def upsert_document(conn, doc: NormalizedDocument, manifest_id: uuid.UUID) -> uuid.UUID:
@@ -278,6 +295,15 @@ def batched(items: list, batch_size: int) -> Iterator[list]:
         yield items[start : start + batch_size]
 
 
+def open_or_create_cache_from_path(config_path: str | Path, cache_path: str | Path) -> CorpusCache:
+    cfg = load_toml(config_path)
+    root = Path(cache_path)
+    manifest = CorpusManifest.from_config(cfg, run_id=root.name)
+    cache = CorpusCache.open_or_create(root=root, manifest=manifest)
+    cache.copy_config(config_path)
+    return cache
+
+
 def local_source_config(cfg: dict, source: str) -> dict:
     source_cfg = cfg.get(source, {})
     shared_cfg = cfg.get("local", {})
@@ -293,14 +319,16 @@ async def build_index(
     local_only: bool = False,
     write_queue: bool = False,
     include_cached_fulltext: bool = False,
+    progress_callback: ProgressCallback | None = None,
 ):
     """Main indexing pipeline."""
     cfg = load_toml(config_path)
+    await notify_progress(progress_callback, "Loaded ingestion config", {"config_path": config_path})
 
     corpus_cfg = cfg["corpus"]
     source = corpus_cfg["source"]
     embedding_model_name = corpus_cfg.get("embedding_model", "pubmedbert")
-    cache = CorpusCache.open(cache_path) if cache_path else None
+    cache = open_or_create_cache_from_path(config_path, cache_path) if cache_path else None
     if local_only and cache is None:
         raise ValueError("--local-only requires --cache so no new empty cache is created")
     if cache is None and use_cache:
@@ -309,6 +337,11 @@ async def build_index(
         logger.info(f"Using corpus cache: {cache.root}")
     if cache is not None and not cache_path:
         logger.info(f"Created corpus cache: {cache.root}")
+    await notify_progress(
+        progress_callback,
+        "Prepared corpus cache",
+        {"cache_path": str(cache.root) if cache is not None else None, "source": source},
+    )
 
     # Load environment
     import os
@@ -318,6 +351,7 @@ async def build_index(
     db_url = os.environ["DATABASE_URL"].replace("+asyncpg", "")  # asyncpg needs no driver prefix
     # Use asyncpg directly for bulk inserts (faster than SQLAlchemy ORM)
     conn = await asyncpg.connect(db_url.replace("postgresql+asyncpg", "postgresql"))
+    await notify_progress(progress_callback, "Connected to database", None)
 
     # Load embedding model
     if embedding_model_name == "pubmedbert":
@@ -330,6 +364,11 @@ async def build_index(
         raise ValueError(f"Unknown embedding model: {embedding_model_name}")
 
     validate_index_embedding(embedder)
+    await notify_progress(
+        progress_callback,
+        "Loaded embedding model",
+        {"embedding_model": embedder.model_name, "dimensions": embedder.dimensions},
+    )
 
     # Create manifest
     manifest_id = uuid.uuid4()
@@ -344,6 +383,11 @@ async def build_index(
         manifest_id, manifest_name, source, embedding_model_name, now,
     )
     logger.info(f"Created manifest {manifest_id} ({manifest_name})")
+    await notify_progress(
+        progress_callback,
+        "Created ingestion manifest",
+        {"manifest_id": str(manifest_id), "manifest_name": manifest_name},
+    )
 
     # Chunker
     chunk_cfg = cfg.get("chunking", {})
@@ -416,6 +460,11 @@ async def build_index(
             ).fetch()
         else:
             raise ValueError(f"Unknown source: {source}")
+    await notify_progress(
+        progress_callback,
+        "Started document ingestion",
+        {"mode": "local_only" if local_only else "source"},
+    )
 
     doc_count = 0
     chunk_count = 0
@@ -465,6 +514,11 @@ async def build_index(
 
             if doc_count % 100 == 0:
                 logger.info(f"Processed {doc_count} documents, {chunk_count} chunks")
+                await notify_progress(
+                    progress_callback,
+                    f"Processed {doc_count} documents",
+                    {"document_count": doc_count, "chunk_count": chunk_count},
+                )
 
         if write_queue and cache is not None:
             queue_path = cache.root / "reports" / "acquisition_queue.jsonl"
@@ -475,6 +529,11 @@ async def build_index(
                 include_cached_fulltext=include_cached_fulltext,
             )
             logger.info(f"Wrote {queue_count} acquisition candidates to {queue_path}")
+            await notify_progress(
+                progress_callback,
+                "Wrote acquisition queue",
+                {"queue_path": str(queue_path), "queue_count": queue_count},
+            )
 
     finally:
         # Update manifest with final counts
@@ -492,6 +551,23 @@ async def build_index(
             "  CREATE INDEX ix_chunks_embedding ON document_chunks\n"
             "  USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);"
         )
+
+    await notify_progress(
+        progress_callback,
+        "Indexing complete",
+        {
+            "manifest_id": str(manifest_id),
+            "document_count": doc_count,
+            "chunk_count": chunk_count,
+            "cache_path": str(cache.root) if cache is not None else None,
+        },
+    )
+    return {
+        "manifest_id": str(manifest_id),
+        "document_count": doc_count,
+        "chunk_count": chunk_count,
+        "cache_path": str(cache.root) if cache is not None else None,
+    }
 
 
 if __name__ == "__main__":

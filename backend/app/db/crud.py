@@ -14,7 +14,16 @@ from typing import Sequence
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ChatMessage, ChatSession, Document, Feedback, User, UserInvitation
+from app.db.models import (
+    ChatMessage,
+    ChatSession,
+    Document,
+    Feedback,
+    IngestionJob,
+    IngestionUploadBatch,
+    User,
+    UserInvitation,
+)
 from app.schemas.auth import UserCreate
 from app.core.security import hash_password
 
@@ -162,6 +171,113 @@ async def mark_invitation_accepted(
     invitation.accepted_at = accepted_at
     await db.flush()
     return invitation
+
+
+# ── Ingestion operations ─────────────────────────────────────────────────────
+
+async def create_ingestion_upload_batch(
+    db: AsyncSession,
+    *,
+    upload_batch_id: uuid.UUID | None = None,
+    created_by_user_id: uuid.UUID,
+    name: str,
+    directory_path: str,
+    file_count: int,
+    total_bytes: int,
+    metadata: dict | None = None,
+) -> IngestionUploadBatch:
+    batch = IngestionUploadBatch(
+        id=upload_batch_id or uuid.uuid4(),
+        created_by_user_id=created_by_user_id,
+        name=name,
+        directory_path=directory_path,
+        file_count=file_count,
+        total_bytes=total_bytes,
+        metadata_=metadata or {},
+    )
+    db.add(batch)
+    await db.flush()
+    return batch
+
+
+async def get_ingestion_upload_batch(
+    db: AsyncSession, upload_batch_id: uuid.UUID
+) -> IngestionUploadBatch | None:
+    result = await db.execute(
+        select(IngestionUploadBatch).where(IngestionUploadBatch.id == upload_batch_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_ingestion_upload_batches(
+    db: AsyncSession, limit: int = 50
+) -> Sequence[IngestionUploadBatch]:
+    result = await db.execute(
+        select(IngestionUploadBatch)
+        .order_by(IngestionUploadBatch.created_at.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+async def create_ingestion_job(
+    db: AsyncSession,
+    *,
+    requested_by_user_id: uuid.UUID,
+    config_name: str,
+    config_path: str,
+    config_snapshot: dict,
+    source: str,
+    mode: str,
+    from_date,
+    year: int | None,
+    cache_path: str | None,
+    pdf_upload_batch_id: uuid.UUID | None,
+    options: dict | None = None,
+) -> IngestionJob:
+    job = IngestionJob(
+        requested_by_user_id=requested_by_user_id,
+        config_name=config_name,
+        config_path=config_path,
+        config_snapshot=config_snapshot,
+        source=source,
+        mode=mode,
+        from_date=from_date,
+        year=year,
+        cache_path=cache_path,
+        pdf_upload_batch_id=pdf_upload_batch_id,
+        options=options or {},
+        progress_message="Queued",
+    )
+    db.add(job)
+    await db.flush()
+    return job
+
+
+async def get_ingestion_job(db: AsyncSession, job_id: uuid.UUID) -> IngestionJob | None:
+    result = await db.execute(select(IngestionJob).where(IngestionJob.id == job_id))
+    return result.scalar_one_or_none()
+
+
+async def list_ingestion_jobs(db: AsyncSession, limit: int = 50) -> Sequence[IngestionJob]:
+    result = await db.execute(
+        select(IngestionJob).order_by(IngestionJob.created_at.desc()).limit(limit)
+    )
+    return result.scalars().all()
+
+
+async def request_ingestion_job_cancel(
+    db: AsyncSession, job: IngestionJob, now: datetime
+) -> IngestionJob:
+    if job.status == "queued":
+        job.status = "cancelled"
+        job.finished_at = now
+        job.progress_message = "Cancelled before worker picked it up"
+    elif job.status == "running":
+        job.status = "cancel_requested"
+        job.progress_message = "Cancellation requested"
+    await db.flush()
+    return job
 
 
 # ── Chat Sessions ─────────────────────────────────────────────────────────────

@@ -3,6 +3,12 @@ import type {
   ChatSession,
   ChatSessionWithMessages,
   ChatQuota,
+  IngestionConfigSummary,
+  IngestionDefaults,
+  IngestionJob,
+  IngestionJobCreate,
+  IngestionUploadBatch,
+  IngestionWorkerStatus,
   InvitationPreview,
   InvitationSendResponse,
   User,
@@ -32,6 +38,18 @@ async function apiFetch<T>(
   }
   if (res.status === 204) {
     return undefined as T;
+  }
+  return res.json() as Promise<T>;
+}
+
+async function apiFormFetch<T>(path: string, body: FormData): Promise<T> {
+  const res = await fetch(`${API_PREFIX}${path}`, {
+    method: "POST",
+    body,
+  });
+  if (!res.ok) {
+    const responseBody = await res.json().catch(() => ({}));
+    throw new Error(responseBody?.detail ?? `API error ${res.status}`);
   }
   return res.json() as Promise<T>;
 }
@@ -112,6 +130,51 @@ export async function sendInvitations(
       subject,
       template,
     }),
+  });
+}
+
+export async function listIngestionConfigs() {
+  return apiFetch<IngestionConfigSummary[]>("/admin/ingestion/configs");
+}
+
+export async function getIngestionDefaults() {
+  return apiFetch<IngestionDefaults>("/admin/ingestion/defaults");
+}
+
+export async function getIngestionWorkerStatus() {
+  return apiFetch<IngestionWorkerStatus>("/admin/ingestion/worker");
+}
+
+export async function listIngestionUploads() {
+  return apiFetch<IngestionUploadBatch[]>("/admin/ingestion/uploads");
+}
+
+export async function uploadIngestionPdfFolder(files: File[], name?: string) {
+  const body = new FormData();
+  for (const file of files) {
+    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+    body.append("files", file, relativePath || file.name);
+  }
+  if (name) {
+    body.append("name", name);
+  }
+  return apiFormFetch<IngestionUploadBatch>("/admin/ingestion/pdf-upload-folders", body);
+}
+
+export async function listIngestionJobs() {
+  return apiFetch<IngestionJob[]>("/admin/ingestion/jobs");
+}
+
+export async function createIngestionJob(payload: IngestionJobCreate) {
+  return apiFetch<IngestionJob>("/admin/ingestion/jobs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function cancelIngestionJob(jobId: string) {
+  return apiFetch<IngestionJob>(`/admin/ingestion/jobs/${jobId}/cancel`, {
+    method: "POST",
   });
 }
 
