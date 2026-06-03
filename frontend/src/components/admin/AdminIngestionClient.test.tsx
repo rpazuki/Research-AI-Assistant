@@ -92,6 +92,26 @@ const queuedJob = {
   updated_at: "2026-05-31T10:00:00Z",
 };
 
+const finishedTestYearJob = {
+  ...queuedJob,
+  id: "job-finished-year",
+  status: "succeeded",
+  mode: "test_year",
+  from_date: null,
+  year: 2024,
+  cache_path: "/app/data/corpora/rlalab-pubmed-v1/test-2024",
+  options: { write_acquisition_queue: false, include_cached_fulltext: true },
+  manifest_id: "manifest-2024",
+  document_count: 42,
+  chunk_count: 420,
+  progress_message: "Succeeded",
+  log_tail: "Created ingestion manifest\nIndexing complete",
+  created_at: "2026-05-31T09:59:30Z",
+  started_at: "2026-05-31T10:00:00Z",
+  finished_at: "2026-05-31T11:02:03Z",
+  updated_at: "2026-05-31T11:02:03Z",
+};
+
 const defaults = {
   config_name: "pubmed_abstract.rlalab.toml",
   mode: "full",
@@ -149,9 +169,10 @@ describe("AdminIngestionClient", () => {
     render(<AdminIngestionClient />);
 
     expect(await screen.findByText("Ingestion operations")).toBeInTheDocument();
-    expect(screen.getByText("pubmed_abstract.rlalab.toml")).toBeInTheDocument();
+    expect(screen.getByLabelText("Approved config")).toHaveValue("pubmed_abstract.rlalab.toml");
     expect(screen.getByText("Manual PDFs")).toBeInTheDocument();
     expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.getByText("From 2026-05-01")).toBeInTheDocument();
     expect(screen.getByDisplayValue("data/corpora/rlalab-pubmed-v1/cumulative")).toBeInTheDocument();
     expect(screen.getByText("Ingestion worker active: polling")).toBeInTheDocument();
     expect(listIngestionConfigs).toHaveBeenCalled();
@@ -159,6 +180,55 @@ describe("AdminIngestionClient", () => {
     expect(getIngestionWorkerStatus).toHaveBeenCalled();
     expect(listIngestionUploads).toHaveBeenCalled();
     expect(listIngestionJobs).toHaveBeenCalled();
+  });
+
+  it("expands finished job rows with timing, requested year, cache, options, and log details", async () => {
+    setupApi({ initialJobs: [finishedTestYearJob] });
+
+    render(<AdminIngestionClient />);
+
+    const modeCell = await screen.findByText("test_year");
+    const tableRow = modeCell.closest("tr");
+    expect(tableRow).not.toBeNull();
+
+    expect(within(tableRow as HTMLElement).getByText("Year 2024")).toBeInTheDocument();
+    fireEvent.click(within(tableRow as HTMLElement).getByRole("button", { name: "Expand job details" }));
+
+    expect(await screen.findByText("Duration")).toBeInTheDocument();
+    expect(screen.getByText("Config")).toBeInTheDocument();
+    expect(screen.getAllByText("pubmed_abstract.rlalab.toml").length).toBeGreaterThan(0);
+    expect(screen.getByText("1h 2m 3s")).toBeInTheDocument();
+    expect(screen.getByText("/app/data/corpora/rlalab-pubmed-v1/test-2024")).toBeInTheDocument();
+    expect(screen.getByText("manifest-2024")).toBeInTheDocument();
+    expect(screen.getByText("include_cached_fulltext")).toBeInTheDocument();
+    expect(screen.getByText(/Created ingestion manifest/)).toBeInTheDocument();
+
+    fireEvent.click(within(tableRow as HTMLElement).getByRole("button", { name: "Collapse job details" }));
+    expect(screen.queryByText("1h 2m 3s")).not.toBeInTheDocument();
+  });
+
+  it("shows incremental from date and job-specific cache path in expanded details", async () => {
+    setupApi({
+      initialJobs: [
+        {
+          ...queuedJob,
+          cache_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative",
+        },
+      ],
+    });
+
+    render(<AdminIngestionClient />);
+
+    const modeCell = await screen.findByText("incremental");
+    const tableRow = modeCell.closest("tr");
+    expect(tableRow).not.toBeNull();
+
+    expect(within(tableRow as HTMLElement).getByText("From 2026-05-01")).toBeInTheDocument();
+    fireEvent.click(within(tableRow as HTMLElement).getByRole("button", { name: "Expand job details" }));
+
+    expect(await screen.findByText("Requested range")).toBeInTheDocument();
+    expect(screen.getAllByText("From 2026-05-01").length).toBeGreaterThan(0);
+    expect(screen.getByText("/app/data/corpora/rlalab-pubmed-v1/cumulative")).toBeInTheDocument();
   });
 
   it("warns when no ingestion worker heartbeat is visible", async () => {
@@ -315,7 +385,7 @@ describe("AdminIngestionClient", () => {
 
     render(<AdminIngestionClient />);
 
-    const row = await screen.findByText("pubmed_abstract.rlalab.toml");
+    const row = await screen.findByText("Queued");
     const tableRow = row.closest("tr");
     expect(tableRow).not.toBeNull();
     fireEvent.click(within(tableRow as HTMLElement).getByRole("button", { name: "Cancel" }));

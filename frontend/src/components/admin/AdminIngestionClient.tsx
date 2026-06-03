@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -32,6 +33,22 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatDuration(startedAt: string | null, finishedAt: string | null) {
+  if (!startedAt || !finishedAt) return "Not available";
+  const started = new Date(startedAt).getTime();
+  const finished = new Date(finishedAt).getTime();
+  if (!Number.isFinite(started) || !Number.isFinite(finished) || finished < started) {
+    return "Not available";
+  }
+  const totalSeconds = Math.round((finished - started) / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
@@ -49,6 +66,38 @@ function formatHeartbeatAge(seconds: number | null) {
   if (seconds === null) return "unknown";
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function jobModeDetail(job: IngestionJob) {
+  if (job.mode === "test_year") return job.year ? `Year ${job.year}` : "Year not set";
+  if (job.mode === "incremental") return job.from_date ? `From ${job.from_date}` : "From date not set";
+  if (job.mode === "local_only") return "Cache only";
+  if (job.mode === "queue_only") return "Queue from cache";
+  return "Complete configured range";
+}
+
+function formatOptionValue(value: unknown) {
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (value === null || value === undefined) return "not set";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return JSON.stringify(value);
+}
+
+function DetailItem({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <div className="text-xs font-semibold uppercase text-gray-500">{label}</div>
+      <div className="mt-1 break-words text-sm text-gray-800">{value || "-"}</div>
+    </div>
+  );
 }
 
 export default function AdminIngestionClient() {
@@ -71,6 +120,7 @@ export default function AdminIngestionClient() {
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedJobIds, setExpandedJobIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     folderInputRef.current?.setAttribute("webkitdirectory", "");
@@ -200,6 +250,18 @@ export default function AdminIngestionClient() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to cancel job");
     }
+  }
+
+  function toggleJobDetails(jobId: string) {
+    setExpandedJobIds((current) => {
+      const next = new Set(current);
+      if (next.has(jobId)) {
+        next.delete(jobId);
+      } else {
+        next.add(jobId);
+      }
+      return next;
+    });
   }
 
   return (
@@ -355,8 +417,8 @@ export default function AdminIngestionClient() {
             <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50 text-left text-xs font-semibold uppercase text-gray-500">
                 <tr>
+                  <th className="px-4 py-3">Details</th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Config</th>
                   <th className="px-4 py-3">Mode</th>
                   <th className="px-4 py-3 text-right">Docs</th>
                   <th className="px-4 py-3 text-right">Chunks</th>
@@ -366,29 +428,90 @@ export default function AdminIngestionClient() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {jobs.map((job) => (
-                  <tr key={job.id} className="align-top hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${statusClass(job.status)}`}>{job.status}</span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-700">{job.config_name}</td>
-                    <td className="px-4 py-3 text-gray-600">{job.mode}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-gray-600">{job.document_count ?? "-"}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-gray-600">{job.chunk_count ?? "-"}</td>
-                    <td className="max-w-sm px-4 py-3 text-gray-600">
-                      <div>{job.progress_message ?? "-"}</div>
-                      {job.error && <div className="mt-1 text-xs text-red-600">{job.error}</div>}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{formatDate(job.started_at)}</td>
-                    <td className="px-4 py-3 text-right">
-                      {(job.status === "queued" || job.status === "running") && (
-                        <button type="button" onClick={() => void handleCancel(job.id)} className="text-sm font-medium text-red-600 hover:underline">
-                          Cancel
-                        </button>
+                {jobs.map((job) => {
+                  const isExpanded = expandedJobIds.has(job.id);
+                  const options = job.options ? Object.entries(job.options) : [];
+                  return (
+                    <Fragment key={job.id}>
+                      <tr className="align-top hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            aria-controls={`job-details-${job.id}`}
+                            onClick={() => toggleJobDetails(job.id)}
+                            className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 text-sm font-semibold text-gray-700 hover:bg-gray-100"
+                          >
+                            <span aria-hidden="true">{isExpanded ? "^" : ">"}</span>
+                            <span className="sr-only">{isExpanded ? "Collapse job details" : "Expand job details"}</span>
+                          </button>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${statusClass(job.status)}`}>{job.status}</span>
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">
+                          <div>{job.mode}</div>
+                          <div className="mt-1 text-xs text-gray-500">{jobModeDetail(job)}</div>
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-600">{job.document_count ?? "-"}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-600">{job.chunk_count ?? "-"}</td>
+                        <td className="max-w-sm px-4 py-3 text-gray-600">
+                          <div>{job.progress_message ?? "-"}</div>
+                          {job.error && <div className="mt-1 text-xs text-red-600">{job.error}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">{formatDate(job.started_at)}</td>
+                        <td className="px-4 py-3 text-right">
+                          {(job.status === "queued" || job.status === "running") && (
+                            <button type="button" onClick={() => void handleCancel(job.id)} className="text-sm font-medium text-red-600 hover:underline">
+                              Cancel
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr key={`${job.id}-details`} id={`job-details-${job.id}`} className="bg-gray-50">
+                          <td colSpan={8} className="px-4 py-4">
+                            <div className="grid gap-4 rounded-md border border-gray-200 bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
+                              <DetailItem label="Config" value={job.config_name} />
+                              <DetailItem label="Duration" value={formatDuration(job.started_at, job.finished_at)} />
+                              <DetailItem label="Created" value={formatDate(job.created_at)} />
+                              <DetailItem label="Updated" value={formatDate(job.updated_at)} />
+                              <DetailItem label="Finished" value={formatDate(job.finished_at)} />
+                              <DetailItem label="Requested range" value={jobModeDetail(job)} />
+                              <DetailItem label="Source" value={job.source} />
+                              <DetailItem label="Manifest" value={job.manifest_id ?? "Not created yet"} />
+                              <DetailItem label="PDF upload batch" value={job.pdf_upload_batch_id ?? "None"} />
+                              <DetailItem label="Cache path" value={job.cache_path ?? "Not set"} className="md:col-span-2 xl:col-span-4" />
+                              <DetailItem label="Config path" value={job.config_path} className="md:col-span-2 xl:col-span-4" />
+                              {options.length > 0 && (
+                                <div className="md:col-span-2 xl:col-span-4">
+                                  <div className="text-xs font-semibold uppercase text-gray-500">Options</div>
+                                  <dl className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                    {options.map(([key, value]) => (
+                                      <div key={key} className="rounded-md bg-gray-50 px-3 py-2">
+                                        <dt className="text-xs font-medium text-gray-500">{key}</dt>
+                                        <dd className="mt-1 text-sm text-gray-800">{formatOptionValue(value)}</dd>
+                                      </div>
+                                    ))}
+                                  </dl>
+                                </div>
+                              )}
+                              {job.error && (
+                                <DetailItem label="Error" value={job.error} className="md:col-span-2 xl:col-span-4" />
+                              )}
+                              {job.log_tail && (
+                                <div className="md:col-span-2 xl:col-span-4">
+                                  <div className="text-xs font-semibold uppercase text-gray-500">Recent log</div>
+                                  <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-gray-950 p-3 text-xs text-gray-100">{job.log_tail}</pre>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                    </td>
-                  </tr>
-                ))}
+                    </Fragment>
+                  );
+                })}
                 {jobs.length === 0 && (
                   <tr>
                     <td className="px-4 py-8 text-sm text-gray-500" colSpan={8}>
