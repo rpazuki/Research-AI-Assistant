@@ -300,6 +300,9 @@ export default function AdminIngestionClient() {
             <Link href="/admin/ingestion/config" className="rounded-md border border-blue-200 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50">
               Config
             </Link>
+            <Link href="/admin/ingestion/acquisition" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
+              Acquisition
+            </Link>
             <Link href="/admin" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
               Users
             </Link>

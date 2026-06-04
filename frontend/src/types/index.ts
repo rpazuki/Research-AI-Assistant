@@ -99,6 +99,15 @@ export interface IngestionDocumentErrorReport {
   parse_errors: string[];
 }
 
+export interface IngestionAcquisitionQueueReport {
+  cache_path: string;
+  queue_file_path: string;
+  exists: boolean;
+  record_count: number;
+  records: Record<string, unknown>[];
+  parse_errors: string[];
+}
+
 export interface IngestionConfigSummary {
   name: string;
   path: string;

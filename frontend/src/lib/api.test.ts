@@ -18,6 +18,7 @@ import {
   getAdminUserSession,
   getChatQuota,
   getCorpusStats,
+  getIngestionAcquisitionQueue,
   getIngestionConfig,
   getIngestionDocumentErrors,
   getInvitation,
@@ -189,6 +190,32 @@ describe("admin user API", () => {
     expect(reports[0].record_count).toBe(1);
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
       "/api/backend/admin/stats/ingestion-document-errors"
+    );
+  });
+
+  it("fetches ingestion acquisition queue reports", async () => {
+    mockFetch(200, [
+      {
+        cache_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative",
+        queue_file_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative/reports/acquisition_queue.jsonl",
+        exists: true,
+        record_count: 1,
+        records: [
+          {
+            document_id: "pmid:123",
+            candidate_url: "https://example.org/article",
+            candidate_pdf_url: "https://example.org/article.pdf",
+          },
+        ],
+        parse_errors: [],
+      },
+    ]);
+
+    const reports = await getIngestionAcquisitionQueue();
+
+    expect(reports[0].records[0].candidate_url).toBe("https://example.org/article");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      "/api/backend/admin/ingestion/acquisition-queue"
     );
   });
 

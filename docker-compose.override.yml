@@ -3,43 +3,49 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
       - ./pipelines:/app/pipelines
-      - corpus_data:/app/data
       - model_cache:/app/model_cache
+      - corpus_data:/app/data
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   ingestion-worker:
     volumes:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
       - ./pipelines:/app/pipelines
-      - corpus_data:/app/data
       - model_cache:/app/model_cache
+      - corpus_data:/app/data
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      target: deps
-    working_dir: /app
-    stdin_open: true
-    tty: true
-    command: >
-      sh -c "(test -x node_modules/.bin/next && test -d node_modules/typescript)
-      || (rm -rf node_modules && npm ci --include=dev);
-      exec node_modules/.bin/next dev --hostname 0.0.0.0"
-    environment:
-      NODE_ENV: development
-      NEXT_TELEMETRY_DISABLED: "1"
-      NEXT_PUBLIC_API_URL: http://backend:8000
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - frontend_node_modules:/app/node_modules
-      - frontend_next:/app/.next
-    depends_on:
-      - backend
 
-volumes:
-  frontend_node_modules:
-  frontend_next:
+
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #     target: deps
+  #   working_dir: /app
+  #   stdin_open: true
+  #   tty: true
+  #   command: >
+  #     sh -c "(test -x node_modules/.bin/next && test -d node_modules/typescript)
+  #     || (rm -rf node_modules && npm ci --include=dev);
+  #     exec node_modules/.bin/next dev --hostname 0.0.0.0"
+  #   environment:
+  #     NODE_ENV: development
+  #     NEXT_TELEMETRY_DISABLED: "1"
+  #     NEXT_PUBLIC_API_URL: http://backend:8000
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - ./frontend:/app
+  #     - frontend_node_modules:/app/node_modules
+  #     - frontend_next:/app/.next
+  #   depends_on:
+  #     - backend
+
+# volumes:
+#   frontend_node_modules:
+#   frontend_next:

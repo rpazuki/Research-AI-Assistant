@@ -4,6 +4,7 @@ import type {
   ChatSession,
   ChatSessionWithMessages,
   ChatQuota,
+  IngestionAcquisitionQueueReport,
   IngestionDocumentErrorReport,
   IngestionConfigContent,
   IngestionConfigDetail,
@@ -93,6 +94,10 @@ export async function getAdminStats() {
 
 export async function getIngestionDocumentErrors() {
   return apiFetch<IngestionDocumentErrorReport[]>("/admin/stats/ingestion-document-errors");
+}
+
+export async function getIngestionAcquisitionQueue() {
+  return apiFetch<IngestionAcquisitionQueueReport[]>("/admin/ingestion/acquisition-queue");
 }
 
 export async function getAdminUser(userId: string) {

@@ -214,6 +214,35 @@ async def test_admin_stats_document_errors_endpoint_reads_cache_errors(
     assert body[0]["records"][0]["error"] == "No text extracted"
 
 
+@pytest.mark.asyncio
+async def test_admin_ingestion_acquisition_queue_endpoint_reads_cache_queue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cache_root = tmp_path / "data" / "corpora" / "rlalab-pubmed-v1" / "run-1"
+    queue_file = cache_root / "reports" / "acquisition_queue.jsonl"
+    queue_file.parent.mkdir(parents=True)
+    queue_file.write_text(
+        '{"document_id":"pmid:123","doi":"10.1000/example","candidate_url":"https://example.org/article","candidate_pdf_url":"https://example.org/article.pdf"}\n',
+        encoding="utf-8",
+    )
+
+    async def fake_list_ingestion_cache_paths(_db):
+        return [str(cache_root)]
+
+    monkeypatch.setattr("app.ingestion.admin_service.ALLOWED_CACHE_ROOT", tmp_path / "data" / "corpora")
+    monkeypatch.setattr("app.db.crud.list_ingestion_cache_paths", fake_list_ingestion_cache_paths)
+
+    async with make_client(make_admin()) as client:
+        response = await client.get("/api/v1/admin/ingestion/acquisition-queue")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["cache_path"] == str(cache_root)
+    assert body[0]["exists"] is True
+    assert body[0]["record_count"] == 1
+    assert body[0]["records"][0]["candidate_url"] == "https://example.org/article"
+
+
 def test_worker_status_reports_missing_heartbeat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     heartbeat_path = tmp_path / "worker_heartbeat.json"
     monkeypatch.setattr("app.ingestion.admin_service.WORKER_HEARTBEAT_PATH", heartbeat_path)

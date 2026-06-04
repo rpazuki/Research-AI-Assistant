@@ -21,6 +21,7 @@ from app.ingestion.admin_service import (
     get_ingestion_config_detail,
     get_worker_status,
     list_approved_configs,
+    read_cache_acquisition_queue_reports,
     load_ingestion_defaults,
     read_cache_document_error_reports,
     save_ingestion_config,
@@ -30,6 +31,7 @@ from app.ingestion.admin_service import (
 from app.schemas.admin import (
     AdminStatsResponse,
     AdminUserSummary,
+    IngestionAcquisitionQueueReport,
     IngestionDocumentErrorReport,
     IngestionConfigCreateRequest,
     IngestionConfigDetail,
@@ -69,6 +71,21 @@ async def get_ingestion_document_errors(
     return [
         IngestionDocumentErrorReport(**report)
         for report in read_cache_document_error_reports(cache_paths)
+    ]
+
+
+@router.get(
+    "/ingestion/acquisition-queue",
+    response_model=list[IngestionAcquisitionQueueReport],
+)
+async def get_ingestion_acquisition_queue(
+    _admin: AdminUser, db: DBSession
+) -> list[IngestionAcquisitionQueueReport]:
+    """Return cached acquisition queue records grouped by ingestion cache path."""
+    cache_paths = await crud.list_ingestion_cache_paths(db)
+    return [
+        IngestionAcquisitionQueueReport(**report)
+        for report in read_cache_acquisition_queue_reports(cache_paths)
     ]
 
 

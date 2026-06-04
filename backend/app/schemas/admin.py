@@ -127,6 +127,15 @@ class IngestionDocumentErrorReport(BaseModel):
     parse_errors: list[str] = Field(default_factory=list)
 
 
+class IngestionAcquisitionQueueReport(BaseModel):
+    cache_path: str
+    queue_file_path: str
+    exists: bool = False
+    record_count: int = 0
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    parse_errors: list[str] = Field(default_factory=list)
+
+
 IngestionJobStatus = Literal[
     "queued",
     "running",
