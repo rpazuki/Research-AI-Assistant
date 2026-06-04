@@ -102,6 +102,16 @@ export interface IngestionConfigSummary {
   supports_pdf_upload: boolean;
 }
 
+export type TomlPrimitive = string | number | boolean | null;
+export type TomlValue = TomlPrimitive | TomlPrimitive[];
+export type IngestionConfigContent = Record<string, Record<string, TomlValue>>;
+
+export interface IngestionConfigDetail {
+  name: string;
+  path: string;
+  content: IngestionConfigContent;
+}
+
 export interface IngestionDefaults {
   config_name: string;
   mode: IngestionJobMode;

@@ -18,15 +18,20 @@ from app.db.models import DEFAULT_USER_TOKEN_LIMIT, IngestionJob, IngestionUploa
 from app.email.sendgrid import send_invitation_email
 from app.ingestion.admin_service import (
     get_approved_config,
+    get_ingestion_config_detail,
     get_worker_status,
     list_approved_configs,
     load_ingestion_defaults,
+    save_ingestion_config,
     save_pdf_upload_folder,
     validate_cache_path,
 )
 from app.schemas.admin import (
     AdminStatsResponse,
     AdminUserSummary,
+    IngestionConfigCreateRequest,
+    IngestionConfigDetail,
+    IngestionConfigSaveRequest,
     IngestionConfigSummary,
     IngestionDefaultsResponse,
     IngestionJobCreate,
@@ -54,6 +59,36 @@ async def get_admin_stats(_admin: AdminUser, db: DBSession) -> AdminStatsRespons
 async def list_ingestion_configs(_admin: AdminUser) -> list[IngestionConfigSummary]:
     """List approved ingestion configs exposed to the admin UI."""
     return [IngestionConfigSummary(**config) for config in list_approved_configs()]
+
+
+@router.post(
+    "/ingestion/configs",
+    response_model=IngestionConfigDetail,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_ingestion_config(
+    body: IngestionConfigCreateRequest, _admin: AdminUser
+) -> IngestionConfigDetail:
+    """Create a new approved ingestion config with a non-conflicting TOML filename."""
+    return IngestionConfigDetail(
+        **save_ingestion_config(body.name, body.content, create=True)
+    )
+
+
+@router.get("/ingestion/configs/{config_name}", response_model=IngestionConfigDetail)
+async def get_ingestion_config(config_name: str, _admin: AdminUser) -> IngestionConfigDetail:
+    """Load one approved ingestion config for editing."""
+    return IngestionConfigDetail(**get_ingestion_config_detail(config_name))
+
+
+@router.put("/ingestion/configs/{config_name}", response_model=IngestionConfigDetail)
+async def update_ingestion_config(
+    config_name: str, body: IngestionConfigSaveRequest, _admin: AdminUser
+) -> IngestionConfigDetail:
+    """Replace one approved ingestion config after source-aware validation."""
+    return IngestionConfigDetail(
+        **save_ingestion_config(config_name, body.content, create=False)
+    )
 
 
 @router.get("/ingestion/defaults", response_model=IngestionDefaultsResponse)

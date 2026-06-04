@@ -4,6 +4,8 @@ import type {
   ChatSession,
   ChatSessionWithMessages,
   ChatQuota,
+  IngestionConfigContent,
+  IngestionConfigDetail,
   IngestionConfigSummary,
   IngestionDefaults,
   IngestionJob,
@@ -140,6 +142,29 @@ export async function sendInvitations(
 
 export async function listIngestionConfigs() {
   return apiFetch<IngestionConfigSummary[]>("/admin/ingestion/configs");
+}
+
+export async function getIngestionConfig(configName: string) {
+  return apiFetch<IngestionConfigDetail>(
+    `/admin/ingestion/configs/${encodeURIComponent(configName)}`
+  );
+}
+
+export async function createIngestionConfig(name: string, content: IngestionConfigContent) {
+  return apiFetch<IngestionConfigDetail>("/admin/ingestion/configs", {
+    method: "POST",
+    body: JSON.stringify({ name, content }),
+  });
+}
+
+export async function updateIngestionConfig(configName: string, content: IngestionConfigContent) {
+  return apiFetch<IngestionConfigDetail>(
+    `/admin/ingestion/configs/${encodeURIComponent(configName)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    }
+  );
 }
 
 export async function getIngestionDefaults() {

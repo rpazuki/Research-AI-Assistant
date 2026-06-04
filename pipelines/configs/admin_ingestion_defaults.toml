@@ -2,7 +2,7 @@
 # These values only prefill controls; queued jobs still save their own DB snapshot.
 
 [defaults]
-config_name = "pubmed_abstract.rlalab.toml"
+config_name = "abstract.pubmed.rlalab.toml"
 mode = "full"
 cache_path = "data/corpora/rlalab-pubmed-v1/cumulative"
 write_acquisition_queue = false

@@ -1,0 +1,8 @@
+[corpus]
+source = "inventories"  # or "eln_lims" / "omics_summaries"
+
+[inventories]
+dir = "./data/inventories"
+access_status = "internal"
+sensitivity = "confidential"
+max_rows = 500

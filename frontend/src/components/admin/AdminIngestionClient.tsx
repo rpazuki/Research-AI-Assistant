@@ -100,6 +100,30 @@ function DetailItem({
   );
 }
 
+function LabelWithTooltip({
+  label,
+  description,
+}: {
+  label: string;
+  description: string;
+}) {
+  return (
+    <span className="flex items-center gap-1 font-medium text-gray-700">
+      <span>{label}</span>
+      <span aria-hidden="true" className="group relative inline-flex">
+        <span
+          className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-gray-300 bg-white text-[10px] font-semibold leading-none text-gray-500"
+        >
+          ?
+        </span>
+        <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-64 -translate-x-1/2 rounded-md border border-gray-200 bg-gray-950 px-3 py-2 text-xs font-normal leading-relaxed text-white shadow-lg group-hover:block group-focus-within:block">
+          {description}
+        </span>
+      </span>
+    </span>
+  );
+}
+
 export default function AdminIngestionClient() {
   const router = useRouter();
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -273,6 +297,9 @@ export default function AdminIngestionClient() {
             <p className="text-sm text-gray-500">Ingestion operations</p>
           </div>
           <div className="flex items-center gap-2">
+            <Link href="/admin/ingestion/config" className="rounded-md border border-blue-200 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50">
+              Config
+            </Link>
             <Link href="/admin" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
               Users
             </Link>
@@ -323,8 +350,11 @@ export default function AdminIngestionClient() {
             </div>
             <div className="grid gap-4 px-4 py-4 text-sm">
               <label className="grid gap-1">
-                <span className="font-medium text-gray-700">Approved config</span>
-                <select value={configName} onChange={(event) => setConfigName(event.target.value)} className="rounded-md border border-gray-300 px-3 py-2">
+                <LabelWithTooltip
+                  label="Approved config"
+                  description="TOML config from pipelines/configs that will be snapshotted and used for this ingestion job."
+                />
+                <select aria-label="Approved config" value={configName} onChange={(event) => setConfigName(event.target.value)} className="rounded-md border border-gray-300 px-3 py-2">
                   {configs.map((config) => (
                     <option key={config.name} value={config.name}>
                       {config.name} · {config.source}
@@ -333,8 +363,11 @@ export default function AdminIngestionClient() {
                 </select>
               </label>
               <label className="grid gap-1">
-                <span className="font-medium text-gray-700">Mode</span>
-                <select value={mode} onChange={(event) => setMode(event.target.value as IngestionJobMode)} className="rounded-md border border-gray-300 px-3 py-2">
+                <LabelWithTooltip
+                  label="Mode"
+                  description="Chooses whether the job runs the full configured corpus, a PubMed update, a one-year test, or cache-only workflows."
+                />
+                <select aria-label="Mode" value={mode} onChange={(event) => setMode(event.target.value as IngestionJobMode)} className="rounded-md border border-gray-300 px-3 py-2">
                   <option value="full">Full run</option>
                   <option value="incremental">Incremental PubMed update</option>
                   <option value="test_year">Single-year test</option>
@@ -344,24 +377,36 @@ export default function AdminIngestionClient() {
               </label>
               {mode === "incremental" && (
                 <label className="grid gap-1">
-                  <span className="font-medium text-gray-700">From date</span>
-                  <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="rounded-md border border-gray-300 px-3 py-2" />
+                  <LabelWithTooltip
+                    label="From date"
+                    description="Publication date lower bound for incremental PubMed abstract ingestion."
+                  />
+                  <input aria-label="From date" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="rounded-md border border-gray-300 px-3 py-2" />
                 </label>
               )}
               {mode === "test_year" && (
                 <label className="grid gap-1">
-                  <span className="font-medium text-gray-700">Year</span>
-                  <input type="number" min="1900" max="2100" value={year} onChange={(event) => setYear(event.target.value)} className="rounded-md border border-gray-300 px-3 py-2" />
+                  <LabelWithTooltip
+                    label="Year"
+                    description="Single publication year used to limit a PubMed test ingestion run."
+                  />
+                  <input aria-label="Year" type="number" min="1900" max="2100" value={year} onChange={(event) => setYear(event.target.value)} className="rounded-md border border-gray-300 px-3 py-2" />
                 </label>
               )}
               <label className="grid gap-1">
-                <span className="font-medium text-gray-700">Cache path</span>
-                <input value={cachePath} onChange={(event) => setCachePath(event.target.value)} placeholder="data/corpora/rlalab-pubmed-v1/cumulative" className="rounded-md border border-gray-300 px-3 py-2" />
+                <LabelWithTooltip
+                  label="Cache path"
+                  description="Optional data/corpora path to append to, re-index from, or use when generating acquisition queues."
+                />
+                <input aria-label="Cache path" value={cachePath} onChange={(event) => setCachePath(event.target.value)} placeholder="data/corpora/rlalab-pubmed-v1/cumulative" className="rounded-md border border-gray-300 px-3 py-2" />
               </label>
               {selectedConfig?.supports_pdf_upload && (
                 <label className="grid gap-1">
-                  <span className="font-medium text-gray-700">PDF upload batch</span>
-                  <select value={selectedUploadId} onChange={(event) => setSelectedUploadId(event.target.value)} className="rounded-md border border-gray-300 px-3 py-2">
+                  <LabelWithTooltip
+                    label="PDF upload batch"
+                    description="Previously staged PDFs that can override the selected PDF config folder for this job."
+                  />
+                  <select aria-label="PDF upload batch" value={selectedUploadId} onChange={(event) => setSelectedUploadId(event.target.value)} className="rounded-md border border-gray-300 px-3 py-2">
                     <option value="">Use config folder</option>
                     {uploads.map((upload) => (
                       <option key={upload.id} value={upload.id}>
@@ -373,11 +418,17 @@ export default function AdminIngestionClient() {
               )}
               <label className="flex items-center gap-2 text-gray-700">
                 <input type="checkbox" checked={writeQueue} onChange={(event) => setWriteQueue(event.target.checked)} />
-                Write acquisition queue
+                <LabelWithTooltip
+                  label="Write acquisition queue"
+                  description="Writes DOI/PMCID full-text acquisition candidates into the selected cache reports folder."
+                />
               </label>
               <label className="flex items-center gap-2 text-gray-700">
                 <input type="checkbox" checked={includeCachedFulltext} onChange={(event) => setIncludeCachedFulltext(event.target.checked)} />
-                Include cached full text in queue
+                <LabelWithTooltip
+                  label="Include cached full text in queue"
+                  description="Includes records that already have PMC full text cached, useful for refresh or audit review."
+                />
               </label>
               <button type="button" disabled={loading || submitting || !configName} onClick={handleCreateJob} className="rounded-md bg-blue-600 px-3 py-2 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300">
                 {submitting ? "Queueing..." : "Queue job"}
@@ -390,8 +441,20 @@ export default function AdminIngestionClient() {
               <h2 className="text-sm font-semibold text-gray-800">Stage PDF folder</h2>
             </div>
             <div className="grid gap-4 px-4 py-4 text-sm">
-              <input value={uploadName} onChange={(event) => setUploadName(event.target.value)} placeholder="Batch name" className="rounded-md border border-gray-300 px-3 py-2" />
-              <input ref={folderInputRef} type="file" multiple accept="application/pdf,.pdf" className="rounded-md border border-gray-300 px-3 py-2" />
+              <label className="grid gap-1">
+                <LabelWithTooltip
+                  label="Batch name"
+                  description="Optional display name for this staged PDF upload set."
+                />
+                <input aria-label="Batch name" value={uploadName} onChange={(event) => setUploadName(event.target.value)} placeholder="Batch name" className="rounded-md border border-gray-300 px-3 py-2" />
+              </label>
+              <label className="grid gap-1">
+                <LabelWithTooltip
+                  label="PDF files"
+                  description="Folder or individual PDFs to stage for local PDF ingestion; files are not acquired from publishers here."
+                />
+                <input aria-label="PDF files" ref={folderInputRef} type="file" multiple accept="application/pdf,.pdf" className="rounded-md border border-gray-300 px-3 py-2" />
+              </label>
               <button type="button" disabled={uploading} onClick={handleUpload} className="rounded-md border border-blue-200 px-3 py-2 font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-gray-400">
                 {uploading ? "Uploading..." : "Upload PDFs"}
               </button>

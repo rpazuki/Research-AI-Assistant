@@ -67,6 +67,13 @@ def fake_worker_session_factory(job):
     return lambda: FakeWorkerSession(job)
 
 
+def config_name_for_source(source: str) -> str:
+    for config in list_approved_configs():
+        if config["source"] == source:
+            return config["name"]
+    raise AssertionError(f"No approved config found for source {source}")
+
+
 @asynccontextmanager
 async def make_client(user: User):
     async def override_current_user():
@@ -90,17 +97,14 @@ def test_lists_only_approved_ingestion_configs() -> None:
 
     assert configs
     assert all(Path(config["path"]).parent == APPROVED_CONFIG_DIR for config in configs)
-    assert {config["name"] for config in configs} >= {
-        "pubmed_abstract.rlalab.toml",
-        "pdf.rlalab.toml",
-    }
+    assert {config["source"] for config in configs} >= {"pubmed_abstract", "pdf"}
     assert "admin_ingestion_defaults.toml" not in {config["name"] for config in configs}
 
 
 def test_loads_committed_ingestion_defaults() -> None:
     defaults = load_ingestion_defaults()
 
-    assert defaults["config_name"] == "pubmed_abstract.rlalab.toml"
+    assert defaults["config_name"] == config_name_for_source("pubmed_abstract")
     assert defaults["mode"] == "full"
     assert defaults["cache_path"] == "data/corpora/rlalab-pubmed-v1/cumulative"
     assert defaults["write_acquisition_queue"] is False
@@ -368,10 +372,7 @@ async def test_ingestion_configs_endpoint_returns_approved_configs() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert {item["name"] for item in body} >= {
-        "pubmed_abstract.rlalab.toml",
-        "pdf.rlalab.toml",
-    }
+    assert {item["source"] for item in body} >= {"pubmed_abstract", "pdf"}
     assert "admin_ingestion_defaults.toml" not in {item["name"] for item in body}
     assert all(item["path"].endswith(f"pipelines/configs/{item['name']}") for item in body)
 
@@ -384,12 +385,67 @@ async def test_ingestion_defaults_endpoint_returns_prefill_values() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body == {
-        "config_name": "pubmed_abstract.rlalab.toml",
+        "config_name": config_name_for_source("pubmed_abstract"),
         "mode": "full",
         "cache_path": "data/corpora/rlalab-pubmed-v1/cumulative",
         "write_acquisition_queue": False,
         "include_cached_fulltext": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_ingestion_config_editor_endpoints_create_read_and_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("app.ingestion.admin_service.APPROVED_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(
+        "app.ingestion.admin_service.INGESTION_DEFAULTS_PATH",
+        tmp_path / "admin_ingestion_defaults.toml",
+    )
+
+    content = {
+        "corpus": {
+            "name": "rlalab-test",
+            "source": "pubmed_abstract",
+            "embedding_model": "pubmedbert",
+        },
+        "pubmed": {
+            "query": '"Yarrowia lipolytica"[Title/Abstract] AND english[lang]',
+            "year_from": 2024,
+            "year_to": 2025,
+            "batch_size": 20,
+            "sleep_between_batches_s": 0.15,
+        },
+        "chunking": {"chunk_size": 512, "chunk_overlap": 64},
+    }
+
+    async with make_client(make_admin()) as client:
+        created = await client.post(
+            "/api/v1/admin/ingestion/configs",
+            json={"name": "test.pubmed.toml", "content": content},
+        )
+        loaded = await client.get("/api/v1/admin/ingestion/configs/test.pubmed.toml")
+        updated_content = {
+            **content,
+            "pubmed": {**content["pubmed"], "year_to": 2026},
+        }
+        updated = await client.put(
+            "/api/v1/admin/ingestion/configs/test.pubmed.toml",
+            json={"content": updated_content},
+        )
+        duplicate = await client.post(
+            "/api/v1/admin/ingestion/configs",
+            json={"name": "test.pubmed.toml", "content": content},
+        )
+
+    assert created.status_code == 201
+    assert created.json()["name"] == "test.pubmed.toml"
+    assert loaded.status_code == 200
+    assert loaded.json()["content"]["pubmed"]["year_from"] == 2024
+    assert updated.status_code == 200
+    assert updated.json()["content"]["pubmed"]["year_to"] == 2026
+    assert duplicate.status_code == 409
+    assert (tmp_path / "test.pubmed.toml").read_text().startswith("# RLALab corpus configuration")
 
 
 @pytest.mark.asyncio
@@ -427,14 +483,15 @@ async def test_create_ingestion_job_rejects_unapproved_config() -> None:
 
 @pytest.mark.asyncio
 async def test_create_ingestion_job_validates_mode_specific_fields() -> None:
+    pubmed_config = config_name_for_source("pubmed_abstract")
     async with make_client(make_admin()) as client:
         incremental = await client.post(
             "/api/v1/admin/ingestion/jobs",
-            json={"config_name": "pubmed_abstract.rlalab.toml", "mode": "incremental"},
+            json={"config_name": pubmed_config, "mode": "incremental"},
         )
         local_only = await client.post(
             "/api/v1/admin/ingestion/jobs",
-            json={"config_name": "pubmed_abstract.rlalab.toml", "mode": "local_only"},
+            json={"config_name": pubmed_config, "mode": "local_only"},
         )
 
     assert incremental.status_code == 400
@@ -446,6 +503,7 @@ async def test_create_ingestion_job_validates_mode_specific_fields() -> None:
 @pytest.mark.asyncio
 async def test_create_ingestion_job_persists_valid_request(monkeypatch: pytest.MonkeyPatch) -> None:
     admin = make_admin()
+    pubmed_config = config_name_for_source("pubmed_abstract")
     created_jobs: list[dict] = []
 
     async def fake_create_ingestion_job(_db, **kwargs):
@@ -481,7 +539,7 @@ async def test_create_ingestion_job_persists_valid_request(monkeypatch: pytest.M
         response = await client.post(
             "/api/v1/admin/ingestion/jobs",
             json={
-                "config_name": "pubmed_abstract.rlalab.toml",
+                "config_name": pubmed_config,
                 "mode": "incremental",
                 "from_date": "2026-05-01",
                 "write_acquisition_queue": True,

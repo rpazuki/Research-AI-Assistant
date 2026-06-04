@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -146,6 +146,21 @@ class IngestionConfigSummary(BaseModel):
     year_to: int | None = None
     pdf_dir: str | None = None
     supports_pdf_upload: bool = False
+
+
+class IngestionConfigDetail(BaseModel):
+    name: str
+    path: str
+    content: dict[str, Any]
+
+
+class IngestionConfigSaveRequest(BaseModel):
+    content: dict[str, Any]
+
+
+class IngestionConfigCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    content: dict[str, Any]
 
 
 class IngestionDefaultsResponse(BaseModel):

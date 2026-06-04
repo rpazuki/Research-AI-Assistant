@@ -195,7 +195,7 @@ describe("AdminIngestionClient", () => {
     fireEvent.click(within(tableRow as HTMLElement).getByRole("button", { name: "Expand job details" }));
 
     expect(await screen.findByText("Duration")).toBeInTheDocument();
-    expect(screen.getByText("Config")).toBeInTheDocument();
+    expect(screen.getAllByText("Config").length).toBeGreaterThan(0);
     expect(screen.getAllByText("pubmed_abstract.rlalab.toml").length).toBeGreaterThan(0);
     expect(screen.getByText("1h 2m 3s")).toBeInTheDocument();
     expect(screen.getByText("/app/data/corpora/rlalab-pubmed-v1/test-2024")).toBeInTheDocument();

@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createSession,
+  createIngestionConfig,
   deleteSession,
   acceptInvitation,
   getAdminStats,
@@ -17,6 +18,7 @@ import {
   getAdminUserSession,
   getChatQuota,
   getCorpusStats,
+  getIngestionConfig,
   getInvitation,
   getJournals,
   getMeshTerms,
@@ -34,6 +36,7 @@ import {
   streamMessage,
   updateAdminUserRole,
   submitFeedback,
+  updateIngestionConfig,
   updateAdminUserStatus,
   updateAdminUserTokenLimit,
   updateSessionTitle,
@@ -387,6 +390,43 @@ describe("admin user API", () => {
       subject: "Join",
       template: "Use {invite_link}",
     });
+  });
+
+  it("loads, creates, and updates ingestion TOML configs", async () => {
+    const content = {
+      corpus: {
+        name: "rlalab-test",
+        source: "pubmed_abstract",
+        embedding_model: "pubmedbert",
+      },
+      pubmed: {
+        query: '"Yarrowia"[Title/Abstract]',
+        year_from: 2024,
+        year_to: 2026,
+        batch_size: 20,
+        sleep_between_batches_s: 0.15,
+      },
+    };
+
+    mockFetch(200, { name: "test.toml", path: "/app/pipelines/configs/test.toml", content });
+    await getIngestionConfig("test.toml");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      "/api/backend/admin/ingestion/configs/test.toml"
+    );
+
+    mockFetch(201, { name: "new.toml", path: "/app/pipelines/configs/new.toml", content });
+    await createIngestionConfig("new.toml", content);
+    const createCall = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(createCall[0]).toBe("/api/backend/admin/ingestion/configs");
+    expect(createCall[1].method).toBe("POST");
+    expect(JSON.parse(createCall[1].body)).toEqual({ name: "new.toml", content });
+
+    mockFetch(200, { name: "test.toml", path: "/app/pipelines/configs/test.toml", content });
+    await updateIngestionConfig("test.toml", content);
+    const updateCall = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(updateCall[0]).toBe("/api/backend/admin/ingestion/configs/test.toml");
+    expect(updateCall[1].method).toBe("PUT");
+    expect(JSON.parse(updateCall[1].body)).toEqual({ content });
   });
 });
 
