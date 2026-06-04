@@ -22,6 +22,7 @@ from app.ingestion.admin_service import (
     get_worker_status,
     list_approved_configs,
     load_ingestion_defaults,
+    read_cache_document_error_reports,
     save_ingestion_config,
     save_pdf_upload_folder,
     validate_cache_path,
@@ -29,6 +30,7 @@ from app.ingestion.admin_service import (
 from app.schemas.admin import (
     AdminStatsResponse,
     AdminUserSummary,
+    IngestionDocumentErrorReport,
     IngestionConfigCreateRequest,
     IngestionConfigDetail,
     IngestionConfigSaveRequest,
@@ -53,6 +55,21 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 async def get_admin_stats(_admin: AdminUser, db: DBSession) -> AdminStatsResponse:
     """Return admin-only corpus, usage, and ingestion operations statistics."""
     return AdminStatsResponse(**await crud.get_admin_stats(db))
+
+
+@router.get(
+    "/stats/ingestion-document-errors",
+    response_model=list[IngestionDocumentErrorReport],
+)
+async def get_ingestion_document_errors(
+    _admin: AdminUser, db: DBSession
+) -> list[IngestionDocumentErrorReport]:
+    """Return cached normalized document parsing errors grouped by ingestion cache path."""
+    cache_paths = await crud.list_ingestion_cache_paths(db)
+    return [
+        IngestionDocumentErrorReport(**report)
+        for report in read_cache_document_error_reports(cache_paths)
+    ]
 
 
 @router.get("/ingestion/configs", response_model=list[IngestionConfigSummary])

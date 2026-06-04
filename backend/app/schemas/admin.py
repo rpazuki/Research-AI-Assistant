@@ -118,6 +118,15 @@ class AdminStatsResponse(BaseModel):
     recent_jobs: list[AdminStatsRecentJob] = Field(default_factory=list)
 
 
+class IngestionDocumentErrorReport(BaseModel):
+    cache_path: str
+    error_file_path: str
+    exists: bool = False
+    record_count: int = 0
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    parse_errors: list[str] = Field(default_factory=list)
+
+
 IngestionJobStatus = Literal[
     "queued",
     "running",

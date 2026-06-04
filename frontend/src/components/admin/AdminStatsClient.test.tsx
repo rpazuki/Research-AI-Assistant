@@ -7,6 +7,7 @@ import AdminStatsClient from "./AdminStatsClient";
 const push = vi.fn();
 const refresh = vi.fn();
 const getAdminStats = vi.fn();
+const getIngestionDocumentErrors = vi.fn();
 const logout = vi.fn();
 
 vi.mock("next/navigation", () => ({
@@ -15,6 +16,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/api", () => ({
   getAdminStats: (...args: unknown[]) => getAdminStats(...args),
+  getIngestionDocumentErrors: (...args: unknown[]) => getIngestionDocumentErrors(...args),
   logout: (...args: unknown[]) => logout(...args),
 }));
 
@@ -83,16 +85,43 @@ const stats = {
   ],
 };
 
+const documentErrorReports = [
+  {
+    cache_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative",
+    error_file_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative/normalized/documents.errors.jsonl",
+    exists: true,
+    record_count: 1,
+    records: [
+      {
+        document_id: "pdf:empty",
+        source: "pdf",
+        error: "No text extracted by pypdf; OCR required before indexing.",
+      },
+    ],
+    parse_errors: [],
+  },
+  {
+    cache_path: "/app/data/corpora/rlalab-pubmed-v1/test-2024",
+    error_file_path: "/app/data/corpora/rlalab-pubmed-v1/test-2024/normalized/documents.errors.jsonl",
+    exists: false,
+    record_count: 0,
+    records: [],
+    parse_errors: [],
+  },
+];
+
 describe("AdminStatsClient", () => {
   beforeEach(() => {
     push.mockReset();
     refresh.mockReset();
     getAdminStats.mockReset();
+    getIngestionDocumentErrors.mockReset();
     logout.mockReset();
   });
 
   it("renders corpus, usage, source, and ingestion statistics", async () => {
     getAdminStats.mockResolvedValue(stats);
+    getIngestionDocumentErrors.mockResolvedValue(documentErrorReports);
 
     render(<AdminStatsClient />);
 
@@ -114,6 +143,11 @@ describe("AdminStatsClient", () => {
     expect(screen.getByText("pdf")).toBeInTheDocument();
     expect(screen.getByText("incremental")).toBeInTheDocument();
     expect(screen.getByText("4m 30s")).toBeInTheDocument();
+    expect(screen.getByText("Normalized document errors")).toBeInTheDocument();
+    expect(screen.getByLabelText("Cache path")).toHaveValue(
+      "/app/data/corpora/rlalab-pubmed-v1/cumulative"
+    );
+    expect(screen.getByText(/No text extracted by pypdf/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Manage ingestion" })).toHaveAttribute(
       "href",
       "/admin/ingestion"
@@ -122,6 +156,7 @@ describe("AdminStatsClient", () => {
 
   it("redirects to login when unauthorized", async () => {
     getAdminStats.mockRejectedValue(new Error("Unauthorized"));
+    getIngestionDocumentErrors.mockResolvedValue([]);
 
     render(<AdminStatsClient />);
 

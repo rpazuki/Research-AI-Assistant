@@ -90,6 +90,15 @@ export interface AdminStats {
   recent_jobs: AdminStatsRecentJob[];
 }
 
+export interface IngestionDocumentErrorReport {
+  cache_path: string;
+  error_file_path: string;
+  exists: boolean;
+  record_count: number;
+  records: Record<string, unknown>[];
+  parse_errors: string[];
+}
+
 export interface IngestionConfigSummary {
   name: string;
   path: string;

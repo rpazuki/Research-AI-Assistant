@@ -268,6 +268,19 @@ async def list_ingestion_jobs(db: AsyncSession, limit: int = 50) -> Sequence[Ing
     return result.scalars().all()
 
 
+async def list_ingestion_cache_paths(db: AsyncSession) -> list[str]:
+    result = await db.execute(
+        select(
+            IngestionJob.cache_path,
+            func.max(IngestionJob.created_at).label("latest_created_at"),
+        )
+        .where(IngestionJob.cache_path.isnot(None), IngestionJob.cache_path != "")
+        .group_by(IngestionJob.cache_path)
+        .order_by(func.max(IngestionJob.created_at).desc())
+    )
+    return [str(row.cache_path) for row in result if row.cache_path]
+
+
 async def request_ingestion_job_cancel(
     db: AsyncSession, job: IngestionJob, now: datetime
 ) -> IngestionJob:

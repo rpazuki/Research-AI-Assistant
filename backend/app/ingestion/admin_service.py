@@ -410,6 +410,48 @@ def validate_cache_path(cache_path: str | None) -> str | None:
     return str(resolved)
 
 
+def read_cache_document_error_reports(cache_paths: list[str]) -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_cache_path in cache_paths:
+        cache_path = validate_cache_path(raw_cache_path)
+        if cache_path is None or cache_path in seen:
+            continue
+        seen.add(cache_path)
+
+        cache_root = Path(cache_path)
+        candidates = [
+            cache_root / "normalized" / "documents.errors.jsonl",
+            cache_root / "normalized" / "documents.error.jsonl",
+        ]
+        error_path = next((path for path in candidates if path.is_file()), candidates[0])
+        records: list[dict[str, Any]] = []
+        parse_errors: list[str] = []
+
+        if error_path.is_file():
+            for index, line in enumerate(error_path.read_text(encoding="utf-8").splitlines(), start=1):
+                if not line.strip():
+                    continue
+                try:
+                    parsed = json.loads(line)
+                    records.append(parsed if isinstance(parsed, dict) else {"value": parsed})
+                except json.JSONDecodeError as exc:
+                    parse_errors.append(f"Line {index}: {exc.msg}")
+                    records.append({"line": index, "raw": line})
+
+        reports.append(
+            {
+                "cache_path": cache_path,
+                "error_file_path": str(error_path),
+                "exists": error_path.is_file(),
+                "record_count": len(records),
+                "records": records,
+                "parse_errors": parse_errors,
+            }
+        )
+    return reports
+
+
 def safe_pdf_relative_path(filename: str) -> Path:
     parts = [part for part in filename.replace("\\", "/").split("/") if part not in {"", ".", ".."}]
     if not parts:

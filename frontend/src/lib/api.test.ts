@@ -19,6 +19,7 @@ import {
   getChatQuota,
   getCorpusStats,
   getIngestionConfig,
+  getIngestionDocumentErrors,
   getInvitation,
   getJournals,
   getMeshTerms,
@@ -168,6 +169,26 @@ describe("admin user API", () => {
     expect(stats.content.pdf_documents).toBe(4);
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
       "/api/backend/admin/stats"
+    );
+  });
+
+  it("fetches ingestion document error reports", async () => {
+    mockFetch(200, [
+      {
+        cache_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative",
+        error_file_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative/normalized/documents.errors.jsonl",
+        exists: true,
+        record_count: 1,
+        records: [{ document_id: "pdf:empty", error: "No text extracted" }],
+        parse_errors: [],
+      },
+    ]);
+
+    const reports = await getIngestionDocumentErrors();
+
+    expect(reports[0].record_count).toBe(1);
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      "/api/backend/admin/stats/ingestion-document-errors"
     );
   });
 

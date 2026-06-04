@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { getAdminStats, logout } from "@/lib/api";
-import type { AdminStats, AdminStatsRecentJob } from "@/types";
+import { getAdminStats, getIngestionDocumentErrors, logout } from "@/lib/api";
+import type { AdminStats, AdminStatsRecentJob, IngestionDocumentErrorReport } from "@/types";
 import { formatBytes, formatCount, formatLastActive, formatLatency } from "./usage";
 
 function formatPercent(value: number, total: number) {
@@ -88,6 +88,8 @@ function statusClass(status: string) {
 export default function AdminStatsClient() {
   const router = useRouter();
   const [stats, setStats] = useState<AdminStats | null>(null);
+  const [documentErrorReports, setDocumentErrorReports] = useState<IngestionDocumentErrorReport[]>([]);
+  const [selectedCachePath, setSelectedCachePath] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,8 +100,18 @@ export default function AdminStatsClient() {
   async function loadStats() {
     try {
       setLoading(true);
-      const data = await getAdminStats();
+      const [data, errorReports] = await Promise.all([
+        getAdminStats(),
+        getIngestionDocumentErrors(),
+      ]);
       setStats(data);
+      setDocumentErrorReports(errorReports);
+      setSelectedCachePath((current) => {
+        if (current && errorReports.some((report) => report.cache_path === current)) {
+          return current;
+        }
+        return errorReports[0]?.cache_path ?? "";
+      });
       setError(null);
     } catch (err) {
       if (err instanceof Error && err.message === "Unauthorized") {
@@ -121,6 +133,10 @@ export default function AdminStatsClient() {
   const overview = stats?.overview;
   const content = stats?.content;
   const totalDocuments = overview?.document_count ?? 0;
+  const selectedErrorReport =
+    documentErrorReports.find((report) => report.cache_path === selectedCachePath) ??
+    documentErrorReports[0] ??
+    null;
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -324,6 +340,78 @@ export default function AdminStatsClient() {
                 </div>
               </section>
             </div>
+
+            <section className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+              <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-800">Normalized document errors</h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Contents of normalized/documents.errors.jsonl from ingestion cache folders.
+                  </p>
+                </div>
+                {documentErrorReports.length > 1 && (
+                  <label className="grid gap-1 text-sm md:min-w-80">
+                    <span className="font-medium text-gray-700">Cache path</span>
+                    <select
+                      value={selectedErrorReport?.cache_path ?? ""}
+                      onChange={(event) => setSelectedCachePath(event.target.value)}
+                      className="rounded-md border border-gray-300 px-3 py-2"
+                    >
+                      {documentErrorReports.map((report) => (
+                        <option key={report.cache_path} value={report.cache_path}>
+                          {report.cache_path}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+
+              {selectedErrorReport ? (
+                <div className="grid gap-4 px-4 py-4">
+                  <div className="grid gap-3 text-sm md:grid-cols-3">
+                    <div className="rounded-md bg-gray-50 px-3 py-2">
+                      <div className="text-xs font-semibold uppercase text-gray-500">Cache path</div>
+                      <div className="mt-1 break-words text-gray-800">{selectedErrorReport.cache_path}</div>
+                    </div>
+                    <div className="rounded-md bg-gray-50 px-3 py-2">
+                      <div className="text-xs font-semibold uppercase text-gray-500">Error file</div>
+                      <div className="mt-1 break-words text-gray-800">{selectedErrorReport.error_file_path}</div>
+                    </div>
+                    <div className="rounded-md bg-gray-50 px-3 py-2">
+                      <div className="text-xs font-semibold uppercase text-gray-500">Records</div>
+                      <div className="mt-1 text-gray-800">
+                        {selectedErrorReport.exists ? formatCount(selectedErrorReport.record_count) : "File not found"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {selectedErrorReport.parse_errors.length > 0 && (
+                    <div className="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+                      {selectedErrorReport.parse_errors.join("; ")}
+                    </div>
+                  )}
+
+                  {selectedErrorReport.records.length > 0 ? (
+                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-gray-950 p-3 text-xs leading-relaxed text-gray-100">
+                      {selectedErrorReport.records
+                        .map((record) => JSON.stringify(record, null, 2))
+                        .join("\n\n")}
+                    </pre>
+                  ) : (
+                    <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
+                      {selectedErrorReport.exists
+                        ? "No normalized document errors recorded in this cache."
+                        : "No normalized document error file was found for this cache path."}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="px-4 py-8 text-sm text-gray-500">
+                  No ingestion jobs with cache paths have been recorded yet.
+                </div>
+              )}
+            </section>
           </div>
         ) : null}
       </section>
