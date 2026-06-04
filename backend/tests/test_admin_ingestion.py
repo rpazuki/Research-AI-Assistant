@@ -106,6 +106,81 @@ def test_loads_committed_ingestion_defaults() -> None:
     assert defaults["write_acquisition_queue"] is False
 
 
+@pytest.mark.asyncio
+async def test_admin_stats_endpoint_returns_operational_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_get_admin_stats(_db):
+        return {
+            "overview": {
+                "document_count": 17,
+                "chunk_count": 71,
+                "indexed_token_count": 12345,
+                "user_count": 4,
+                "active_user_count": 3,
+                "inactive_user_count": 1,
+                "session_count": 8,
+                "question_count": 21,
+                "assistant_message_count": 20,
+                "prompt_token_count": 900,
+                "completion_token_count": 300,
+                "total_chat_token_count": 1200,
+                "avg_latency_ms": 512.5,
+                "upload_batch_count": 2,
+                "uploaded_pdf_file_count": 9,
+                "uploaded_pdf_bytes": 2048,
+                "last_ingestion_at": datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc),
+                "last_corpus_name": "rlalab-pubmed-v1",
+                "year_min": 2000,
+                "year_max": 2026,
+            },
+            "content": {
+                "abstract_only_documents": 10,
+                "full_text_documents": 3,
+                "pdf_documents": 4,
+                "electronic_lab_notebook_documents": 0,
+                "other_documents": 0,
+            },
+            "sources": [
+                {
+                    "source": "pubmed",
+                    "document_count": 10,
+                    "chunk_count": 30,
+                    "indexed_token_count": 6000,
+                }
+            ],
+            "job_statuses": [{"status": "succeeded", "count": 2}],
+            "recent_jobs": [
+                {
+                    "id": uuid.uuid4(),
+                    "status": "succeeded",
+                    "source": "pubmed_abstract",
+                    "mode": "incremental",
+                    "document_count": 17,
+                    "chunk_count": 71,
+                    "created_at": datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc),
+                    "started_at": datetime(2026, 6, 1, 9, 1, tzinfo=timezone.utc),
+                    "finished_at": datetime(2026, 6, 1, 9, 5, tzinfo=timezone.utc),
+                    "progress_message": "Succeeded",
+                    "error": None,
+                }
+            ],
+        }
+
+    monkeypatch.setattr("app.db.crud.get_admin_stats", fake_get_admin_stats)
+
+    async with make_client(make_admin()) as client:
+        response = await client.get("/api/v1/admin/stats")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["overview"]["document_count"] == 17
+    assert body["overview"]["total_chat_token_count"] == 1200
+    assert body["content"]["pdf_documents"] == 4
+    assert body["sources"][0]["source"] == "pubmed"
+    assert body["recent_jobs"][0]["mode"] == "incremental"
+
+
 def test_worker_status_reports_missing_heartbeat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     heartbeat_path = tmp_path / "worker_heartbeat.json"
     monkeypatch.setattr("app.ingestion.admin_service.WORKER_HEARTBEAT_PATH", heartbeat_path)

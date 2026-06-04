@@ -11,15 +11,17 @@ import uuid
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import and_, distinct, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     ChatMessage,
     ChatSession,
     Document,
+    DocumentChunk,
     Feedback,
     IngestionJob,
+    IngestionManifest,
     IngestionUploadBatch,
     User,
     UserInvitation,
@@ -278,6 +280,204 @@ async def request_ingestion_job_cancel(
         job.progress_message = "Cancellation requested"
     await db.flush()
     return job
+
+
+async def get_admin_stats(db: AsyncSession) -> dict:
+    """Return aggregate admin dashboard stats from persisted operational data."""
+    notebook_sources = ("eln", "electronic_lab_notebook", "lab_notebook", "notebook")
+    full_text_condition = and_(
+        Document.full_text.isnot(None),
+        Document.full_text != "",
+        Document.source.notin_(("pdf", *notebook_sources)),
+    )
+    pdf_condition = Document.source == "pdf"
+    notebook_condition = Document.source.in_(notebook_sources)
+    abstract_only_condition = and_(
+        Document.abstract.isnot(None),
+        Document.abstract != "",
+        or_(Document.full_text.is_(None), Document.full_text == ""),
+        Document.source.notin_(("pdf", *notebook_sources)),
+    )
+    known_content_condition = or_(
+        abstract_only_condition,
+        full_text_condition,
+        pdf_condition,
+        notebook_condition,
+    )
+
+    document_result = await db.execute(
+        select(
+            func.count(Document.id).label("document_count"),
+            func.min(Document.year).label("year_min"),
+            func.max(Document.year).label("year_max"),
+        )
+    )
+    document_row = document_result.one()
+
+    chunk_result = await db.execute(
+        select(
+            func.count(DocumentChunk.id).label("chunk_count"),
+            func.coalesce(func.sum(DocumentChunk.token_count), 0).label("indexed_token_count"),
+        )
+    )
+    chunk_row = chunk_result.one()
+
+    content_result = await db.execute(
+        select(
+            func.count(Document.id)
+            .filter(abstract_only_condition)
+            .label("abstract_only_documents"),
+            func.count(Document.id)
+            .filter(full_text_condition)
+            .label("full_text_documents"),
+            func.count(Document.id).filter(pdf_condition).label("pdf_documents"),
+            func.count(Document.id)
+            .filter(notebook_condition)
+            .label("electronic_lab_notebook_documents"),
+            func.count(Document.id)
+            .filter(not_(known_content_condition))
+            .label("other_documents"),
+        )
+    )
+    content_row = content_result.one()
+
+    source_result = await db.execute(
+        select(
+            Document.source,
+            func.count(distinct(Document.id)).label("document_count"),
+            func.count(DocumentChunk.id).label("chunk_count"),
+            func.coalesce(func.sum(DocumentChunk.token_count), 0).label("indexed_token_count"),
+        )
+        .outerjoin(DocumentChunk, DocumentChunk.document_id == Document.id)
+        .group_by(Document.source)
+        .order_by(func.count(distinct(Document.id)).desc(), Document.source)
+    )
+
+    usage_result = await db.execute(
+        select(
+            func.count(distinct(User.id)).label("user_count"),
+            func.count(distinct(User.id)).filter(User.is_active.is_(True)).label("active_user_count"),
+            func.count(distinct(User.id))
+            .filter(User.is_active.is_(False))
+            .label("inactive_user_count"),
+            func.count(distinct(ChatSession.id)).label("session_count"),
+            func.count(ChatMessage.id)
+            .filter(ChatMessage.role == "user")
+            .label("question_count"),
+            func.count(ChatMessage.id)
+            .filter(ChatMessage.role == "assistant")
+            .label("assistant_message_count"),
+            func.coalesce(func.sum(ChatMessage.prompt_tokens), 0).label("prompt_token_count"),
+            func.coalesce(func.sum(ChatMessage.completion_tokens), 0).label(
+                "completion_token_count"
+            ),
+            func.avg(ChatMessage.latency_ms)
+            .filter(ChatMessage.role == "assistant", ChatMessage.latency_ms.isnot(None))
+            .label("avg_latency_ms"),
+        )
+        .select_from(User)
+        .outerjoin(ChatSession, ChatSession.user_id == User.id)
+        .outerjoin(ChatMessage, ChatMessage.session_id == ChatSession.id)
+    )
+    usage_row = usage_result.one()
+
+    upload_result = await db.execute(
+        select(
+            func.count(IngestionUploadBatch.id).label("upload_batch_count"),
+            func.coalesce(func.sum(IngestionUploadBatch.file_count), 0).label(
+                "uploaded_pdf_file_count"
+            ),
+            func.coalesce(func.sum(IngestionUploadBatch.total_bytes), 0).label(
+                "uploaded_pdf_bytes"
+            ),
+        )
+    )
+    upload_row = upload_result.one()
+
+    last_manifest_result = await db.execute(
+        select(IngestionManifest.created_at, IngestionManifest.name)
+        .order_by(IngestionManifest.created_at.desc())
+        .limit(1)
+    )
+    last_manifest = last_manifest_result.one_or_none()
+
+    job_status_result = await db.execute(
+        select(IngestionJob.status, func.count(IngestionJob.id).label("count"))
+        .group_by(IngestionJob.status)
+        .order_by(func.count(IngestionJob.id).desc(), IngestionJob.status)
+    )
+    recent_jobs_result = await db.execute(
+        select(IngestionJob).order_by(IngestionJob.created_at.desc()).limit(5)
+    )
+    prompt_tokens = int(usage_row.prompt_token_count or 0)
+    completion_tokens = int(usage_row.completion_token_count or 0)
+
+    return {
+        "overview": {
+            "document_count": int(document_row.document_count or 0),
+            "chunk_count": int(chunk_row.chunk_count or 0),
+            "indexed_token_count": int(chunk_row.indexed_token_count or 0),
+            "user_count": int(usage_row.user_count or 0),
+            "active_user_count": int(usage_row.active_user_count or 0),
+            "inactive_user_count": int(usage_row.inactive_user_count or 0),
+            "session_count": int(usage_row.session_count or 0),
+            "question_count": int(usage_row.question_count or 0),
+            "assistant_message_count": int(usage_row.assistant_message_count or 0),
+            "prompt_token_count": prompt_tokens,
+            "completion_token_count": completion_tokens,
+            "total_chat_token_count": prompt_tokens + completion_tokens,
+            "avg_latency_ms": (
+                float(usage_row.avg_latency_ms)
+                if usage_row.avg_latency_ms is not None
+                else None
+            ),
+            "upload_batch_count": int(upload_row.upload_batch_count or 0),
+            "uploaded_pdf_file_count": int(upload_row.uploaded_pdf_file_count or 0),
+            "uploaded_pdf_bytes": int(upload_row.uploaded_pdf_bytes or 0),
+            "last_ingestion_at": last_manifest.created_at if last_manifest else None,
+            "last_corpus_name": last_manifest.name if last_manifest else None,
+            "year_min": document_row.year_min,
+            "year_max": document_row.year_max,
+        },
+        "content": {
+            "abstract_only_documents": int(content_row.abstract_only_documents or 0),
+            "full_text_documents": int(content_row.full_text_documents or 0),
+            "pdf_documents": int(content_row.pdf_documents or 0),
+            "electronic_lab_notebook_documents": int(
+                content_row.electronic_lab_notebook_documents or 0
+            ),
+            "other_documents": int(content_row.other_documents or 0),
+        },
+        "sources": [
+            {
+                "source": row.source or "unknown",
+                "document_count": int(row.document_count or 0),
+                "chunk_count": int(row.chunk_count or 0),
+                "indexed_token_count": int(row.indexed_token_count or 0),
+            }
+            for row in source_result
+        ],
+        "job_statuses": [
+            {"status": row.status, "count": int(row.count or 0)}
+            for row in job_status_result
+        ],
+        "recent_jobs": [
+            {
+                "id": job.id,
+                "status": job.status,
+                "source": job.source,
+                "mode": job.mode,
+                "document_count": job.document_count,
+                "chunk_count": job.chunk_count,
+                "created_at": job.created_at,
+                "started_at": job.started_at,
+                "finished_at": job.finished_at,
+                "progress_message": job.progress_message,
+                "error": job.error,
+            }
+            for job in recent_jobs_result.scalars().all()
+        ],
+    }
 
 
 # ── Chat Sessions ─────────────────────────────────────────────────────────────

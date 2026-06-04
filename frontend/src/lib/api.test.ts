@@ -12,6 +12,7 @@ import {
   createSession,
   deleteSession,
   acceptInvitation,
+  getAdminStats,
   getAdminUser,
   getAdminUserSession,
   getChatQuota,
@@ -122,6 +123,51 @@ describe("getMe", () => {
 // ── admin ─────────────────────────────────────────────────────────────────────
 
 describe("admin user API", () => {
+  it("fetches aggregate admin statistics", async () => {
+    mockFetch(200, {
+      overview: {
+        document_count: 17,
+        chunk_count: 71,
+        indexed_token_count: 12345,
+        user_count: 4,
+        active_user_count: 3,
+        inactive_user_count: 1,
+        session_count: 8,
+        question_count: 21,
+        assistant_message_count: 20,
+        prompt_token_count: 900,
+        completion_token_count: 300,
+        total_chat_token_count: 1200,
+        avg_latency_ms: 512.5,
+        upload_batch_count: 2,
+        uploaded_pdf_file_count: 9,
+        uploaded_pdf_bytes: 2048,
+        last_ingestion_at: "2026-06-01T10:00:00Z",
+        last_corpus_name: "rlalab-pubmed-v1",
+        year_min: 2000,
+        year_max: 2026,
+      },
+      content: {
+        abstract_only_documents: 10,
+        full_text_documents: 3,
+        pdf_documents: 4,
+        electronic_lab_notebook_documents: 0,
+        other_documents: 0,
+      },
+      sources: [],
+      job_statuses: [],
+      recent_jobs: [],
+    });
+
+    const stats = await getAdminStats();
+
+    expect(stats.overview.document_count).toBe(17);
+    expect(stats.content.pdf_documents).toBe(4);
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      "/api/backend/admin/stats"
+    );
+  });
+
   it("lists admin users", async () => {
     mockFetch(200, [
       {

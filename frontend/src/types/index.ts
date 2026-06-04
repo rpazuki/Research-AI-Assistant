@@ -25,6 +25,71 @@ export interface AdminUserSummary extends User {
   usage: UserUsageSummary;
 }
 
+export interface AdminStatsOverview {
+  document_count: number;
+  chunk_count: number;
+  indexed_token_count: number;
+  user_count: number;
+  active_user_count: number;
+  inactive_user_count: number;
+  session_count: number;
+  question_count: number;
+  assistant_message_count: number;
+  prompt_token_count: number;
+  completion_token_count: number;
+  total_chat_token_count: number;
+  avg_latency_ms: number | null;
+  upload_batch_count: number;
+  uploaded_pdf_file_count: number;
+  uploaded_pdf_bytes: number;
+  last_ingestion_at: string | null;
+  last_corpus_name: string | null;
+  year_min: number | null;
+  year_max: number | null;
+}
+
+export interface AdminStatsContentBreakdown {
+  abstract_only_documents: number;
+  full_text_documents: number;
+  pdf_documents: number;
+  electronic_lab_notebook_documents: number;
+  other_documents: number;
+}
+
+export interface AdminStatsSourceBreakdownItem {
+  source: string;
+  document_count: number;
+  chunk_count: number;
+  indexed_token_count: number;
+}
+
+export interface AdminStatsJobStatusItem {
+  status: string;
+  count: number;
+}
+
+export interface AdminStatsRecentJob {
+  id: string;
+  status: string;
+  source: string;
+  mode: string;
+  document_count: number | null;
+  chunk_count: number | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  progress_message: string | null;
+  error: string | null;
+}
+
+export interface AdminStats {
+  overview: AdminStatsOverview;
+  content: AdminStatsContentBreakdown;
+  sources: AdminStatsSourceBreakdownItem[];
+  job_statuses: AdminStatsJobStatusItem[];
+  recent_jobs: AdminStatsRecentJob[];
+}
+
 export interface IngestionConfigSummary {
   name: string;
   path: string;

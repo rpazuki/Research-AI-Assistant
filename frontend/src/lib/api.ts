@@ -1,4 +1,5 @@
 import type {
+  AdminStats,
   AdminUserSummary,
   ChatSession,
   ChatSessionWithMessages,
@@ -81,6 +82,10 @@ export async function getMe() {
 
 export async function listAdminUsers() {
   return apiFetch<AdminUserSummary[]>("/admin/users");
+}
+
+export async function getAdminStats() {
+  return apiFetch<AdminStats>("/admin/stats");
 }
 
 export async function getAdminUser(userId: string) {

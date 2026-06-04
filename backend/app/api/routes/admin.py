@@ -25,6 +25,7 @@ from app.ingestion.admin_service import (
     validate_cache_path,
 )
 from app.schemas.admin import (
+    AdminStatsResponse,
     AdminUserSummary,
     IngestionConfigSummary,
     IngestionDefaultsResponse,
@@ -41,6 +42,12 @@ from app.schemas.admin import (
 from app.schemas.chat import ChatMessageResponse, ChatSessionResponse, ChatSessionWithMessages
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/stats", response_model=AdminStatsResponse)
+async def get_admin_stats(_admin: AdminUser, db: DBSession) -> AdminStatsResponse:
+    """Return admin-only corpus, usage, and ingestion operations statistics."""
+    return AdminStatsResponse(**await crud.get_admin_stats(db))
 
 
 @router.get("/ingestion/configs", response_model=list[IngestionConfigSummary])

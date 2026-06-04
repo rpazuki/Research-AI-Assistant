@@ -69,6 +69,12 @@ export default function AdminUsersClient() {
           </div>
           <div className="flex items-center gap-2">
             <Link
+              href="/admin/stats"
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+            >
+              Stats
+            </Link>
+            <Link
               href="/admin/ingestion"
               className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
             >

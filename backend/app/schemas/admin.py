@@ -53,6 +53,71 @@ class AdminUserSummary(BaseModel):
     usage: UserUsageSummary = Field(default_factory=UserUsageSummary)
 
 
+class AdminStatsOverview(BaseModel):
+    document_count: int = 0
+    chunk_count: int = 0
+    indexed_token_count: int = 0
+    user_count: int = 0
+    active_user_count: int = 0
+    inactive_user_count: int = 0
+    session_count: int = 0
+    question_count: int = 0
+    assistant_message_count: int = 0
+    prompt_token_count: int = 0
+    completion_token_count: int = 0
+    total_chat_token_count: int = 0
+    avg_latency_ms: float | None = None
+    upload_batch_count: int = 0
+    uploaded_pdf_file_count: int = 0
+    uploaded_pdf_bytes: int = 0
+    last_ingestion_at: datetime | None = None
+    last_corpus_name: str | None = None
+    year_min: int | None = None
+    year_max: int | None = None
+
+
+class AdminStatsContentBreakdown(BaseModel):
+    abstract_only_documents: int = 0
+    full_text_documents: int = 0
+    pdf_documents: int = 0
+    electronic_lab_notebook_documents: int = 0
+    other_documents: int = 0
+
+
+class AdminStatsSourceBreakdownItem(BaseModel):
+    source: str
+    document_count: int = 0
+    chunk_count: int = 0
+    indexed_token_count: int = 0
+
+
+class AdminStatsJobStatusItem(BaseModel):
+    status: str
+    count: int = 0
+
+
+class AdminStatsRecentJob(BaseModel):
+    id: uuid.UUID
+    status: str
+    source: str
+    mode: str
+    document_count: int | None = None
+    chunk_count: int | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    progress_message: str | None = None
+    error: str | None = None
+
+
+class AdminStatsResponse(BaseModel):
+    overview: AdminStatsOverview = Field(default_factory=AdminStatsOverview)
+    content: AdminStatsContentBreakdown = Field(default_factory=AdminStatsContentBreakdown)
+    sources: list[AdminStatsSourceBreakdownItem] = Field(default_factory=list)
+    job_statuses: list[AdminStatsJobStatusItem] = Field(default_factory=list)
+    recent_jobs: list[AdminStatsRecentJob] = Field(default_factory=list)
+
+
 IngestionJobStatus = Literal[
     "queued",
     "running",
