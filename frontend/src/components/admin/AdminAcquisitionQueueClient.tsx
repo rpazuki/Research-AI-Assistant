@@ -4,7 +4,11 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { getIngestionAcquisitionQueue, logout } from "@/lib/api";
+import {
+  downloadIngestionAcquisitionReviewCsv,
+  getIngestionAcquisitionQueue,
+  logout,
+} from "@/lib/api";
 import type { IngestionAcquisitionQueueReport } from "@/types";
 
 const PREFERRED_COLUMNS = [
@@ -118,6 +122,7 @@ export default function AdminAcquisitionQueueClient() {
   const [reports, setReports] = useState<IngestionAcquisitionQueueReport[]>([]);
   const [selectedCachePath, setSelectedCachePath] = useState("");
   const [loading, setLoading] = useState(true);
+  const [downloadingCsv, setDownloadingCsv] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -150,6 +155,27 @@ export default function AdminAcquisitionQueueClient() {
   async function handleLogout() {
     await logout();
     router.push("/login");
+  }
+
+  async function handleCsvDownload() {
+    if (!selectedReport) return;
+    try {
+      setDownloadingCsv(true);
+      const { blob, filename } = await downloadIngestionAcquisitionReviewCsv(selectedReport.cache_path);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download review CSV");
+    } finally {
+      setDownloadingCsv(false);
+    }
   }
 
   const selectedReport = reports.find((report) => report.cache_path === selectedCachePath) ?? reports[0];
@@ -198,22 +224,32 @@ export default function AdminAcquisitionQueueClient() {
                 Review queued full-text acquisition candidates for each ingestion cache.
               </p>
             </div>
-            {reports.length > 1 && (
-              <label className="grid gap-1 text-sm font-medium text-gray-700">
-                Cache path
-                <select
-                  value={selectedCachePath}
-                  onChange={(event) => setSelectedCachePath(event.target.value)}
-                  className="min-w-72 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-normal text-gray-900"
-                >
-                  {reports.map((report) => (
-                    <option key={report.cache_path} value={report.cache_path}>
-                      {report.cache_path}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+            <div className="flex flex-wrap items-end gap-3">
+              {reports.length > 1 && (
+                <label className="grid gap-1 text-sm font-medium text-gray-700">
+                  Cache path
+                  <select
+                    value={selectedCachePath}
+                    onChange={(event) => setSelectedCachePath(event.target.value)}
+                    className="min-w-72 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-normal text-gray-900"
+                  >
+                    {reports.map((report) => (
+                      <option key={report.cache_path} value={report.cache_path}>
+                        {report.cache_path}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button
+                type="button"
+                onClick={handleCsvDownload}
+                disabled={loading || !selectedReport || downloadingCsv}
+                className="rounded-md border border-blue-200 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {downloadingCsv ? "Preparing..." : "To CSV"}
+              </button>
+            </div>
           </div>
 
           {loading && <div className="mt-6 text-sm text-gray-500">Loading acquisition queue...</div>}

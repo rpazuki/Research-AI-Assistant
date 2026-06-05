@@ -13,6 +13,7 @@ import {
   createIngestionConfig,
   deleteSession,
   acceptInvitation,
+  downloadIngestionAcquisitionReviewCsv,
   getAdminStats,
   getAdminUser,
   getAdminUserSession,
@@ -216,6 +217,31 @@ describe("admin user API", () => {
     expect(reports[0].records[0].candidate_url).toBe("https://example.org/article");
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
       "/api/backend/admin/ingestion/acquisition-queue"
+    );
+  });
+
+  it("downloads ingestion acquisition review CSV", async () => {
+    const blob = new Blob(["doi,candidate_url\n10.1000/example,https://example.org/article\n"], {
+      type: "text/csv",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({
+          "content-disposition": 'attachment; filename="review_queue.csv"',
+        }),
+        blob: vi.fn().mockResolvedValue(blob),
+      } as unknown as Response)
+    );
+
+    const result = await downloadIngestionAcquisitionReviewCsv("/app/data/corpora/run 1");
+
+    expect(result.filename).toBe("review_queue.csv");
+    expect(result.blob).toBe(blob);
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(
+      "/api/backend/admin/ingestion/acquisition-queue/review-csv?cache_path=%2Fapp%2Fdata%2Fcorpora%2Frun%201"
     );
   });
 

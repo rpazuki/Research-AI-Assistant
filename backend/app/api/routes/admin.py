@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile, status
 
 from app.api.deps import AdminUser, DBSession
 from app.core.config import settings
@@ -17,6 +17,7 @@ from app.db import crud
 from app.db.models import DEFAULT_USER_TOKEN_LIMIT, IngestionJob, IngestionUploadBatch, User
 from app.email.sendgrid import send_invitation_email
 from app.ingestion.admin_service import (
+    export_cache_acquisition_review_csv,
     get_approved_config,
     get_ingestion_config_detail,
     get_worker_status,
@@ -87,6 +88,22 @@ async def get_ingestion_acquisition_queue(
         IngestionAcquisitionQueueReport(**report)
         for report in read_cache_acquisition_queue_reports(cache_paths)
     ]
+
+
+@router.get("/ingestion/acquisition-queue/review-csv")
+async def download_ingestion_acquisition_review_csv(
+    cache_path: str, _admin: AdminUser
+) -> Response:
+    """Generate a review_queue.csv from the selected acquisition queue cache."""
+    csv_content, record_count = export_cache_acquisition_review_csv(cache_path)
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="review_queue.csv"',
+            "X-Record-Count": str(record_count),
+        },
+    )
 
 
 @router.get("/ingestion/configs", response_model=list[IngestionConfigSummary])

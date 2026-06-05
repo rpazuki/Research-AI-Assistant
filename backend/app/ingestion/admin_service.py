@@ -6,6 +6,7 @@ import re
 import sys
 import uuid
 import json
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -487,6 +488,34 @@ def read_cache_acquisition_queue_reports(cache_paths: list[str]) -> list[dict[st
             }
         )
     return reports
+
+
+def export_cache_acquisition_review_csv(cache_path: str) -> tuple[bytes, int]:
+    validated_cache_path = validate_cache_path(cache_path)
+    if validated_cache_path is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cache path is required")
+
+    from pipelines.acquisition.fulltext import export_review_csv
+    from pipelines.corpus_cache import CorpusCache
+
+    try:
+        cache = CorpusCache.open(validated_cache_path)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "review_queue.csv"
+            count = export_review_csv(
+                cache,
+                output_path,
+                include_cached_fulltext=True,
+                refresh_queue=False,
+            )
+            return output_path.read_bytes(), count
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cache is missing required file: {exc.filename or exc}",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 def safe_pdf_relative_path(filename: str) -> Path:

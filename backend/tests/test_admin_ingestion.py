@@ -28,6 +28,7 @@ from app.ingestion.worker import (
     run_job,
 )
 from app.main import app
+from pipelines.corpus_cache import CorpusCache, CorpusManifest
 
 
 def make_admin(role: str = "admin") -> User:
@@ -241,6 +242,42 @@ async def test_admin_ingestion_acquisition_queue_endpoint_reads_cache_queue(
     assert body[0]["exists"] is True
     assert body[0]["record_count"] == 1
     assert body[0]["records"][0]["candidate_url"] == "https://example.org/article"
+
+
+@pytest.mark.asyncio
+async def test_admin_ingestion_acquisition_queue_review_csv_downloads_generated_csv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cache_root = tmp_path / "data" / "corpora" / "rlalab-pubmed-v1" / "run-1"
+    CorpusCache.create_at_root(
+        root=cache_root,
+        manifest=CorpusManifest(
+            schema_version="1.0",
+            corpus_name="rlalab-pubmed-v1",
+            run_id="run-1",
+            created_at="2026-06-05T00:00:00Z",
+            source="pubmed_abstract",
+        ),
+    )
+    queue_file = cache_root / "reports" / "acquisition_queue.jsonl"
+    queue_file.write_text(
+        '{"document_id":"pmid:123","pmid":"123","pmc_id":"PMC123","doi":"10.1000/example","route":"doi","candidate_url":"https://example.org/article","candidate_pdf_url":"https://example.org/article.pdf","priority":"high"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("app.ingestion.admin_service.ALLOWED_CACHE_ROOT", tmp_path / "data" / "corpora")
+
+    async with make_client(make_admin()) as client:
+        response = await client.get(
+            "/api/v1/admin/ingestion/acquisition-queue/review-csv",
+            params={"cache_path": str(cache_root)},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == 'attachment; filename="review_queue.csv"'
+    assert response.headers["x-record-count"] == "1"
+    assert "candidate_url" in response.text
+    assert "https://example.org/article.pdf" in response.text
 
 
 def test_worker_status_reports_missing_heartbeat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

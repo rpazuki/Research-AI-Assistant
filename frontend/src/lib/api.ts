@@ -59,6 +59,12 @@ async function apiFormFetch<T>(path: string, body: FormData): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+function filenameFromDisposition(disposition: string | null, fallback: string) {
+  if (!disposition) return fallback;
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  return match?.[1] ?? fallback;
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export async function login(email: string, password: string) {
@@ -98,6 +104,23 @@ export async function getIngestionDocumentErrors() {
 
 export async function getIngestionAcquisitionQueue() {
   return apiFetch<IngestionAcquisitionQueueReport[]>("/admin/ingestion/acquisition-queue");
+}
+
+export async function downloadIngestionAcquisitionReviewCsv(cachePath: string) {
+  const res = await fetch(
+    `${API_PREFIX}/admin/ingestion/acquisition-queue/review-csv?cache_path=${encodeURIComponent(cachePath)}`
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.detail ?? `API error ${res.status}`);
+  }
+  return {
+    blob: await res.blob(),
+    filename: filenameFromDisposition(
+      res.headers.get("content-disposition"),
+      "review_queue.csv"
+    ),
+  };
 }
 
 export async function getAdminUser(userId: string) {
