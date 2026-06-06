@@ -1,14 +1,19 @@
 """
 app/core/config.py
 ------------------
-Centralised settings loaded from environment variables via pydantic-settings.
+Centralised settings loaded from YAML plus environment variables.
 
 ALL configuration access in the application must go through this module.
 Never call os.getenv() directly in business logic.
 """
 
+import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
+
+import yaml
+from dotenv import dotenv_values
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -16,18 +21,104 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _THIS_FILE = Path(__file__).resolve()
 _BACKEND_DIR = _THIS_FILE.parents[2]
 _REPO_ROOT = _THIS_FILE.parents[3]
+_DEFAULT_CONFIG_FILE = _BACKEND_DIR / "configs" / "backend.yaml"
+_ENV_FILES = (
+    _REPO_ROOT / ".env",
+    _BACKEND_DIR / ".env",
+)
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _dotenv_config_environment() -> str | None:
+    for env_file in _ENV_FILES:
+        if not env_file.exists():
+            continue
+        values = dotenv_values(env_file)
+        for key in ("APP_ENV", "APP_ENVIRONMENT", "ENVIRONMENT"):
+            value = values.get(key)
+            if value:
+                return value
+    return None
+
+
+def _config_environment() -> str:
+    return (
+        os.environ.get("APP_ENV")
+        or os.environ.get("APP_ENVIRONMENT")
+        or os.environ.get("ENVIRONMENT")
+        or _dotenv_config_environment()
+        or "development"
+    )
+
+
+def _config_file_path() -> Path:
+    return Path(os.environ.get("BACKEND_CONFIG_FILE", _DEFAULT_CONFIG_FILE)).expanduser()
+
+
+def _load_backend_yaml_settings() -> dict[str, Any]:
+    config_path = _config_file_path()
+    if not config_path.exists():
+        return {}
+
+    with config_path.open(encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle) or {}
+
+    defaults = raw.get("defaults", {})
+    if not isinstance(defaults, dict):
+        raise ValueError(f"{config_path} must contain a mapping under 'defaults'")
+
+    environment = _config_environment()
+    environments = raw.get("environments", {})
+    if environments is None:
+        environments = {}
+    if not isinstance(environments, dict):
+        raise ValueError(f"{config_path} must contain a mapping under 'environments'")
+
+    selected = environments.get(environment, {})
+    if selected is None:
+        selected = {}
+    if not isinstance(selected, dict):
+        raise ValueError(f"{config_path} environment '{environment}' must be a mapping")
+
+    return _deep_merge(defaults, selected)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(
-            str(_REPO_ROOT / ".env"),
-            str(_BACKEND_DIR / ".env"),
+            str(_ENV_FILES[0]),
+            str(_ENV_FILES[1]),
         ),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _load_backend_yaml_settings,
+            file_secret_settings,
+        )
 
     # ── App ───────────────────────────────────────────────────────────────
     app_name: str = "RLALab AI Research Assistant"
@@ -56,7 +147,7 @@ class Settings(BaseSettings):
     llm_model: str = "claude-sonnet-4-6"
     anthropic_api_key: str = Field(
         default="",
-        validation_alias=AliasChoices("ANTHROPIC_API_KEY", "LLM_API_KEY"),
+        validation_alias=AliasChoices("anthropic_api_key", "ANTHROPIC_API_KEY", "LLM_API_KEY"),
     )
     llm_max_tokens: int = 2048
     llm_temperature: float = 0.1

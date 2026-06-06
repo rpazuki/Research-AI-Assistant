@@ -42,6 +42,7 @@ class LocalTextCollectionIngester(BaseIngester):
         sensitivity: str = "internal",
         owner: str | None = None,
         retention_policy: str = "internal-project-storage",
+        text_suffixes: list[str] | set[str] | None = None,
     ) -> None:
         self.directory = Path(directory)
         if not self.directory.is_dir():
@@ -52,6 +53,7 @@ class LocalTextCollectionIngester(BaseIngester):
         self.sensitivity = sensitivity
         self.owner = owner
         self.retention_policy = retention_policy
+        self.text_suffixes = {suffix.lower() for suffix in (text_suffixes or TEXT_SUFFIXES)}
 
     def get_config_summary(self) -> dict:
         return {
@@ -74,7 +76,7 @@ class LocalTextCollectionIngester(BaseIngester):
 
     def _files(self) -> list[Path]:
         return sorted(
-            path for path in self.directory.rglob("*") if path.is_file() and path.suffix.lower() in TEXT_SUFFIXES
+            path for path in self.directory.rglob("*") if path.is_file() and path.suffix.lower() in self.text_suffixes
         )
 
     def _parse_file(self, path: Path) -> NormalizedDocument:
@@ -145,6 +147,7 @@ class LocalTableCollectionIngester(BaseIngester):
         owner: str | None = None,
         retention_policy: str = "internal-project-storage",
         max_rows: int = 500,
+        table_suffixes: list[str] | set[str] | None = None,
     ) -> None:
         self.directory = Path(directory)
         if not self.directory.is_dir():
@@ -156,6 +159,7 @@ class LocalTableCollectionIngester(BaseIngester):
         self.owner = owner
         self.retention_policy = retention_policy
         self.max_rows = max_rows
+        self.table_suffixes = {suffix.lower() for suffix in (table_suffixes or TABLE_SUFFIXES)}
 
     def get_config_summary(self) -> dict:
         return {
@@ -179,7 +183,7 @@ class LocalTableCollectionIngester(BaseIngester):
 
     def _files(self) -> list[Path]:
         return sorted(
-            path for path in self.directory.rglob("*") if path.is_file() and path.suffix.lower() in TABLE_SUFFIXES
+            path for path in self.directory.rglob("*") if path.is_file() and path.suffix.lower() in self.table_suffixes
         )
 
     def _parse_file(self, path: Path) -> NormalizedDocument:

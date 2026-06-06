@@ -18,13 +18,14 @@ import type {
   InvitationSendResponse,
   User,
 } from "@/types";
+import { getPublicFrontendConfig } from "@/lib/public-config";
 
 /**
  * Typed API client for the frontend proxy layer.
  * Auth is handled by an httpOnly cookie set by /api/auth/login.
  */
 
-const API_PREFIX = "/api/backend";
+const API_PREFIX = getPublicFrontendConfig().apiProxyPrefix;
 
 async function apiFetch<T>(
   path: string,

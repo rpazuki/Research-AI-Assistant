@@ -1,0 +1,30 @@
+defaults:
+  app_environment: "development"
+  backend_api_url: "http://localhost:8000"
+  backend_api_version_path: "/api/v1"
+  api_proxy_prefix: "/api/backend"
+  request_cache: "no-store"
+
+  auth_cookie_name: "rlalab_access_token"
+  auth_cookie_http_only: true
+  auth_cookie_same_site: "lax"
+  auth_cookie_secure: false
+  auth_cookie_path: "/"
+
+  next_output: "standalone"
+
+environments:
+  development:
+    app_environment: "development"
+    backend_api_url: "http://localhost:8000"
+    auth_cookie_secure: false
+
+  production:
+    app_environment: "production"
+    backend_api_url: "http://backend:8000"
+    auth_cookie_secure: true
+
+  deployed:
+    app_environment: "production"
+    backend_api_url: "http://backend:8000"
+    auth_cookie_secure: true

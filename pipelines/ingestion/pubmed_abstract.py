@@ -53,6 +53,8 @@ class PubMedAbstractIngester(BaseIngester):
         batch_size: int = 20,
         sleep_s: float = 0.15,
         checkpoint_dir: str = "./data/checkpoints",
+        max_retries: int = 5,
+        retry_backoff_base_s: float = 1.0,
         incremental_from: date | None = None,
         cache: CorpusCache | None = None,
     ) -> None:
@@ -63,6 +65,8 @@ class PubMedAbstractIngester(BaseIngester):
         self.sleep_s = sleep_s
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.max_retries = max_retries
+        self.retry_backoff_base_s = retry_backoff_base_s
         self.incremental_from = incremental_from
         self.cache = cache
 
@@ -77,23 +81,24 @@ class PubMedAbstractIngester(BaseIngester):
         cache: CorpusCache | None = None,
     ) -> "PubMedAbstractIngester":
         """Instantiate from a TOML config file."""
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore
+        from dotenv import load_dotenv
+        from pipelines.config import load_pipeline_config
 
-        with open(config_path, "rb") as f:
-            cfg = tomllib.load(f)
-
+        load_dotenv()
+        cfg = load_pipeline_config(config_path)
         pm = cfg["pubmed"]
+        cache_cfg = cfg.get("cache", {})
         return cls(
             query=pm["query"].strip(),
             year_from=pm.get("year_from", 2000),
             year_to=pm.get("year_to", date.today().year),
-            email=os.environ["NCBI_EMAIL"],
-            api_key=os.environ["NCBI_API_KEY"],
+            email=pm.get("email") or os.environ["NCBI_EMAIL"],
+            api_key=pm.get("api_key") or os.environ["NCBI_API_KEY"],
             batch_size=pm.get("batch_size", 20),
             sleep_s=pm.get("sleep_between_batches_s", 0.15),
+            checkpoint_dir=pm.get("checkpoint_dir", cache_cfg.get("checkpoint_dir", "./data/checkpoints")),
+            max_retries=pm.get("max_retries", 5),
+            retry_backoff_base_s=pm.get("retry_backoff_base_s", 1.0),
             incremental_from=incremental_from,
             cache=cache,
         )
@@ -262,16 +267,15 @@ class PubMedAbstractIngester(BaseIngester):
 
     def _safe_esearch(self, term: str, retstart: int = 0, retmax: int = 1) -> dict:
         """Entrez esearch with retry."""
-        max_retries = 5
-        for attempt in range(max_retries):
+        for attempt in range(self.max_retries):
             try:
                 handle = Entrez.esearch(db="pubmed", term=term, retstart=retstart, retmax=retmax)
                 record = Entrez.read(handle)
                 handle.close()
                 return record
             except (RemoteDisconnected, OSError) as exc:
-                logger.warning(f"esearch attempt {attempt+1}/{max_retries}: {exc}")
-                time.sleep(2 ** attempt)
+                logger.warning(f"esearch attempt {attempt+1}/{self.max_retries}: {exc}")
+                time.sleep(self.retry_backoff_base_s * (2 ** attempt))
         raise RuntimeError("esearch failed after retries")
 
     def _safe_efetch(self, id_list: list[str]) -> dict:
@@ -280,16 +284,15 @@ class PubMedAbstractIngester(BaseIngester):
 
     def _safe_efetch_xml(self, id_list: list[str]) -> str:
         """Entrez efetch with retry, returning the raw XML payload."""
-        max_retries = 5
-        for attempt in range(max_retries):
+        for attempt in range(self.max_retries):
             try:
                 handle = Entrez.efetch(db="pubmed", id=id_list, retmode="xml")
                 raw = handle.read()
                 handle.close()
                 return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
             except (IncompleteRead, RemoteDisconnected, OSError) as exc:
-                logger.warning(f"efetch attempt {attempt+1}/{max_retries}: {exc}")
-                time.sleep(2 ** attempt)
+                logger.warning(f"efetch attempt {attempt+1}/{self.max_retries}: {exc}")
+                time.sleep(self.retry_backoff_base_s * (2 ** attempt))
         raise RuntimeError("efetch failed after retries")
 
     @staticmethod

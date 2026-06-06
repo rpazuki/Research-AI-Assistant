@@ -1,6 +1,8 @@
 import { cookies } from "next/headers";
 
-export const AUTH_COOKIE_NAME = "rlalab_access_token";
+import { frontendConfig } from "@/lib/config";
+
+export const AUTH_COOKIE_NAME = frontendConfig.authCookieName;
 
 export async function getAuthToken(): Promise<string | undefined> {
   const cookieStore = await cookies();

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { frontendConfig } from "@/lib/config";
 
 export async function GET(_request: Request, context: { params: Promise<{ token: string }> }) {
   const { token } = await context.params;
-  const response = await fetch(`${API_BASE}/api/v1/auth/invitations/${token}`, {
-    cache: "no-store",
+  const response = await fetch(`${frontendConfig.backendApiUrl}${frontendConfig.backendApiVersionPath}/auth/invitations/${token}`, {
+    cache: frontendConfig.requestCache,
   });
   const body = await response.json().catch(() => ({}));
   return NextResponse.json(body, { status: response.status });
@@ -13,11 +13,11 @@ export async function GET(_request: Request, context: { params: Promise<{ token:
 
 export async function POST(request: Request, context: { params: Promise<{ token: string }> }) {
   const { token } = await context.params;
-  const response = await fetch(`${API_BASE}/api/v1/auth/invitations/${token}/accept`, {
+  const response = await fetch(`${frontendConfig.backendApiUrl}${frontendConfig.backendApiVersionPath}/auth/invitations/${token}/accept`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: await request.text(),
-    cache: "no-store",
+    cache: frontendConfig.requestCache,
   });
   const body = await response.json().catch(() => ({}));
   return NextResponse.json(body, { status: response.status });

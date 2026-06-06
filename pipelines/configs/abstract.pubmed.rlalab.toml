@@ -43,3 +43,6 @@ sleep_between_batches_s = 0.15
 [chunking]
 chunk_size    = 512    # words (approximate tokens)
 chunk_overlap = 64     # words
+
+# Shared runtime defaults such as checkpoint paths, retries, deduplication,
+# and progress cadence live in pipelines/configs/pipeline.defaults.yaml.

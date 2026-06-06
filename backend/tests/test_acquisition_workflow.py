@@ -1,8 +1,11 @@
 import shutil
+import textwrap
 
 from pipelines.acquisition.fulltext import (
     acquisition_guidance,
+    allowed_asset_types,
     export_review_csv,
+    licensed_access_methods,
     read_queue,
     register_manual_assets_from_manifest,
     register_manual_asset,
@@ -162,3 +165,27 @@ def test_cache_validate_detects_transferable_registered_assets(tmp_path) -> None
 
     assert validation["ok"] is True
     assert validation["counts"]["assets"] == 1
+
+
+def test_acquisition_allow_lists_are_configurable(monkeypatch, tmp_path) -> None:
+    defaults_path = tmp_path / "pipeline.defaults.yaml"
+    defaults_path.write_text(
+        textwrap.dedent(
+            """
+            defaults:
+              acquisition:
+                allowed_access_methods:
+                  - "manual-upload"
+                allowed_asset_suffixes:
+                  - ".pdf"
+                  - ".docx"
+            environments: {}
+            """
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PIPELINE_CONFIG_FILE", str(defaults_path))
+
+    assert licensed_access_methods() == {"manual-upload"}
+    assert allowed_asset_types()[".pdf"] == "licensed_pdf"
+    assert allowed_asset_types()[".docx"] == "licensed_file"

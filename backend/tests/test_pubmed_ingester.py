@@ -1,4 +1,5 @@
 from datetime import date
+import textwrap
 
 from pipelines.corpus_cache import CorpusCache, CorpusManifest
 from pipelines.ingestion.pubmed_abstract import PubMedAbstractIngester
@@ -76,3 +77,51 @@ def test_cached_pubmed_batches_are_keyed_by_pmid_list(tmp_path) -> None:
     assert first_xml == "<xml>1</xml>"
     assert second_xml == "<xml>2</xml>"
     assert calls == [["1"], ["2"]]
+
+
+def test_from_config_uses_pipeline_defaults(monkeypatch, tmp_path) -> None:
+    defaults_path = tmp_path / "pipeline.defaults.yaml"
+    checkpoint_dir = tmp_path / "checkpoints"
+    defaults_path.write_text(
+        textwrap.dedent(
+            f"""
+            defaults:
+              cache:
+                checkpoint_dir: "{checkpoint_dir}"
+              pubmed:
+                batch_size: 9
+                sleep_between_batches_s: 0.25
+                max_retries: 3
+                retry_backoff_base_s: 0.5
+            environments: {{}}
+            """
+        ),
+        encoding="utf-8",
+    )
+    corpus_path = tmp_path / "corpus.toml"
+    corpus_path.write_text(
+        textwrap.dedent(
+            """
+            [corpus]
+            name = "test"
+            source = "pubmed_abstract"
+
+            [pubmed]
+            query = "synthetic biology"
+            year_from = 2024
+            year_to = 2024
+            """
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PIPELINE_CONFIG_FILE", str(defaults_path))
+    monkeypatch.setenv("NCBI_EMAIL", "lab@example.com")
+    monkeypatch.setenv("NCBI_API_KEY", "dummy")
+
+    ingester = PubMedAbstractIngester.from_config(str(corpus_path))
+
+    assert ingester.batch_size == 9
+    assert ingester.sleep_s == 0.25
+    assert ingester.max_retries == 3
+    assert ingester.retry_backoff_base_s == 0.5
+    assert ingester.checkpoint_dir == checkpoint_dir

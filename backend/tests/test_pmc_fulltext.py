@@ -101,7 +101,8 @@ def test_fetch_xml_follows_redirects(monkeypatch) -> None:
 
     monkeypatch.setattr("pipelines.ingestion.pmc_fulltext.httpx.Client", FakeClient)
 
-    xml_text, final_url = PMCFullTextIngester._fetch_xml("https://old.example/oai")
+    ingester = PMCFullTextIngester(pmc_ids=[])
+    xml_text, final_url = ingester._fetch_xml("https://old.example/oai")
 
     assert xml_text == "<xml/>"
     assert final_url.startswith("https://pmc.ncbi.nlm.nih.gov")

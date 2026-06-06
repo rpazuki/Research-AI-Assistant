@@ -1,0 +1,82 @@
+defaults:
+  runtime:
+    database_url: "postgresql+asyncpg://postgres:postgres@localhost:5432/rlalab_ai"
+    progress_interval_documents: 100
+
+  cache:
+    checkpoint_dir: "./data/checkpoints"
+
+  pubmed:
+    batch_size: 20
+    sleep_between_batches_s: 0.15
+    max_retries: 5
+    retry_backoff_base_s: 1.0
+
+  pmc:
+    sleep_between_batches_s: 0.5
+    http:
+      attempts: 4
+      timeout_s: 30
+      retry_backoff_base_s: 2.0
+      retry_backoff_max_s: 30.0
+
+  pdf:
+    dir: "./data/pdfs"
+
+  local:
+    access_status: "internal"
+    sensitivity: "internal"
+    retention_policy: "internal-project-storage"
+    text_suffixes:
+      - ".md"
+      - ".markdown"
+      - ".txt"
+    table_suffixes:
+      - ".csv"
+      - ".tsv"
+
+  chunking:
+    chunk_size: 512
+    chunk_overlap: 64
+
+  indexing:
+    embedding_batch_size: 2
+    embedding_batch_size_by_source:
+      pubmed_abstract: 32
+    ivfflat_lists: 100
+
+  deduplication:
+    enabled: true
+    match_on_pmid: true
+    match_on_document_id: true
+    match_on_title: true
+    title_threshold: 0.92
+
+  acquisition:
+    default_access_status: "licensed-access"
+    default_sensitivity: "licensed"
+    default_retention_policy: "internal-project-storage"
+    allowed_asset_suffixes:
+      - ".pdf"
+      - ".xml"
+      - ".txt"
+    allowed_access_methods:
+      - "imperial-library"
+      - "imperial-vpn"
+      - "shibboleth"
+      - "publisher-tdm"
+      - "author-provided"
+      - "manual-upload"
+
+environments:
+  development:
+    runtime:
+      database_url: "postgresql+asyncpg://postgres:postgres@localhost:5432/rlalab_ai"
+
+  production:
+    runtime:
+      progress_interval_documents: 250
+
+  deployed:
+    runtime:
+      progress_interval_documents: 250

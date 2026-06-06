@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getAuthToken } from "@/lib/auth";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { frontendConfig } from "@/lib/config";
 
 async function proxy(request: Request, path: string[]) {
   const token = await getAuthToken();
@@ -11,7 +10,7 @@ async function proxy(request: Request, path: string[]) {
   }
 
   const url = new URL(request.url);
-  const backendUrl = `${API_BASE}/api/v1/${path.join("/")}${url.search}`;
+  const backendUrl = `${frontendConfig.backendApiUrl}${frontendConfig.backendApiVersionPath}/${path.join("/")}${url.search}`;
   const headers = new Headers(request.headers);
   headers.set("Authorization", `Bearer ${token}`);
   headers.delete("host");
@@ -20,7 +19,7 @@ async function proxy(request: Request, path: string[]) {
     method: request.method,
     headers,
     body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
-    cache: "no-store",
+    cache: frontendConfig.requestCache,
   };
   if (init.body) {
     init.duplex = "half";

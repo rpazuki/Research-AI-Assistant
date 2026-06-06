@@ -111,6 +111,37 @@ SECRET_KEY=replace_with_32_byte_hex_string
 
 All other values in `.env` have working defaults for local development.
 
+## Configuration — Runtime Defaults
+
+Runtime defaults are committed as YAML, split by application area:
+
+- Backend: `backend/configs/backend.yaml`
+- Frontend: `frontend/configs/frontend.yaml`
+- Evaluation: `evaluation/configs/evaluation.yaml`
+- Pipelines: `pipelines/configs/pipeline.defaults.yaml` plus corpus-specific `pipelines/configs/*.toml`
+
+Each YAML file has `defaults` and `environments` sections. Local development uses the `development` section. Deployed Compose sets `APP_ENV=production` and `FRONTEND_ENV=production`, which selects the production/deployed values. Environment variables and `.env` still override YAML, so secrets and installation-specific URLs should stay out of committed config.
+
+Useful overrides:
+
+```bash
+BACKEND_CONFIG_FILE=/path/to/backend.yaml
+FRONTEND_CONFIG_FILE=/path/to/frontend.yaml
+EVALUATION_CONFIG_FILE=/path/to/evaluation.yaml
+PIPELINE_CONFIG_FILE=/path/to/pipeline.defaults.yaml
+EVALUATION_API_URL=https://assistant.example
+EVALUATION_TOKEN=<jwt>
+```
+
+### YAML vs. TOML — when to use which
+
+The project uses both formats on purpose. The dividing line is **runtime overlay vs. declarative pipeline data**, not personal preference — do not "unify" everything to one format.
+
+- **YAML** — cross-component runtime/deployment overlay (`backend.yaml`, `frontend.yaml`, `evaluation.yaml`, `pipeline.defaults.yaml`). These share the `defaults` + `environments` overlay shape, are read by both Python (PyYAML) and the **frontend** (`js-yaml`), and benefit from YAML's readable nesting. YAML stays here primarily because the frontend has no stdlib TOML parser — keeping it YAML is what makes the loaders "seamless" across Python and TypeScript.
+- **TOML** — pipeline-local declarative corpus/ingestion configs (`pipelines/configs/*.toml`, e.g. `abstract.pubmed.rlalab.toml`, `admin_ingestion_defaults.toml`). These are Python-only, read via stdlib `tomllib`, and written by the admin ingestion editor (`backend/app/ingestion/admin_service.py`).
+
+Note: `pipeline.defaults.yaml` lives alongside the corpus `*.toml` files but belongs to the **YAML overlay family** (the cross-component runtime defaults), whereas the `*.toml` files are the declarative corpus definitions — that is why the `pipelines/configs/` folder mixes formats.
+
 ---
 
 ## Bootstrap — First Run
@@ -165,7 +196,7 @@ cd frontend
 npm install
 ```
 
-The frontend proxies authenticated API calls through Next.js route handlers under `/api/auth/*` and `/api/backend/*`. For local development, `NEXT_PUBLIC_API_URL` must point to the FastAPI backend, which defaults to `http://localhost:8000`.
+The frontend proxies authenticated API calls through Next.js route handlers under `/api/auth/*` and `/api/backend/*`. For local development, `frontend/configs/frontend.yaml` points to `http://localhost:8000`; set `NEXT_PUBLIC_API_URL` only when you need to override the YAML value.
 
 ---
 

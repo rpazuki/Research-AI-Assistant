@@ -56,10 +56,9 @@ from pipelines.ingestion.lab_sources import (
 from pipelines.corpus_cache import (
     CorpusCache,
     CorpusManifest,
-    create_cache_from_config,
-    load_toml,
     write_acquisition_queue,
 )
+from pipelines.config import load_pipeline_config
 from pipelines.processing.chunker import Chunker
 from pipelines.processing.deduplicator import Deduplicator
 from pipelines.processing.normalizer import NormalizedDocument
@@ -296,10 +295,18 @@ def batched(items: list, batch_size: int) -> Iterator[list]:
 
 
 def open_or_create_cache_from_path(config_path: str | Path, cache_path: str | Path) -> CorpusCache:
-    cfg = load_toml(config_path)
+    cfg = load_pipeline_config(config_path)
     root = Path(cache_path)
     manifest = CorpusManifest.from_config(cfg, run_id=root.name)
     cache = CorpusCache.open_or_create(root=root, manifest=manifest)
+    cache.copy_config(config_path)
+    return cache
+
+
+def create_cache_from_pipeline_config(config_path: str | Path) -> CorpusCache:
+    cfg = load_pipeline_config(config_path)
+    manifest = CorpusManifest.from_config(cfg)
+    cache = CorpusCache.create(manifest=manifest)
     cache.copy_config(config_path)
     return cache
 
@@ -308,6 +315,12 @@ def local_source_config(cfg: dict, source: str) -> dict:
     source_cfg = cfg.get(source, {})
     shared_cfg = cfg.get("local", {})
     return {**shared_cfg, **source_cfg}
+
+
+def embedding_batch_size_for_source(cfg: dict, source: str) -> int:
+    indexing_cfg = cfg.get("indexing", {})
+    by_source = indexing_cfg.get("embedding_batch_size_by_source", {})
+    return int(by_source.get(source, indexing_cfg.get("embedding_batch_size", 2)))
 
 
 async def build_index(
@@ -322,7 +335,11 @@ async def build_index(
     progress_callback: ProgressCallback | None = None,
 ):
     """Main indexing pipeline."""
-    cfg = load_toml(config_path)
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    cfg = load_pipeline_config(config_path)
     await notify_progress(progress_callback, "Loaded ingestion config", {"config_path": config_path})
 
     corpus_cfg = cfg["corpus"]
@@ -332,7 +349,7 @@ async def build_index(
     if local_only and cache is None:
         raise ValueError("--local-only requires --cache so no new empty cache is created")
     if cache is None and use_cache:
-        cache = create_cache_from_config(config_path)
+        cache = create_cache_from_pipeline_config(config_path)
     elif cache is not None:
         logger.info(f"Using corpus cache: {cache.root}")
     if cache is not None and not cache_path:
@@ -343,12 +360,9 @@ async def build_index(
         {"cache_path": str(cache.root) if cache is not None else None, "source": source},
     )
 
-    # Load environment
-    import os
-    from dotenv import load_dotenv
-    load_dotenv()
-
-    db_url = os.environ["DATABASE_URL"].replace("+asyncpg", "")  # asyncpg needs no driver prefix
+    runtime_cfg = cfg.get("runtime", {})
+    db_url = runtime_cfg.get("database_url") or os.environ["DATABASE_URL"]
+    db_url = db_url.replace("+asyncpg", "")  # asyncpg needs no driver prefix
     # Use asyncpg directly for bulk inserts (faster than SQLAlchemy ORM)
     conn = await asyncpg.connect(db_url.replace("postgresql+asyncpg", "postgresql"))
     await notify_progress(progress_callback, "Connected to database", None)
@@ -397,10 +411,8 @@ async def build_index(
         chunk_overlap=chunk_cfg.get("chunk_overlap", 64),
         mode="abstract" if "abstract" in source else "fulltext",
     )
-    embedding_batch_size = indexing_cfg.get(
-        "embedding_batch_size",
-        32 if source == "pubmed_abstract" else 2,
-    )
+    embedding_batch_size = embedding_batch_size_for_source(cfg, source)
+    progress_interval_documents = int(runtime_cfg.get("progress_interval_documents", 100))
     cached_chunks = cached_chunks_by_document(cache)
 
     if local_only:
@@ -428,6 +440,10 @@ async def build_index(
             documents = PMCFullTextIngester(
                 pmc_ids=pmc_ids,
                 sleep_s=cfg.get("pmc", {}).get("sleep_between_batches_s", 0.5),
+                http_attempts=cfg.get("pmc", {}).get("http", {}).get("attempts", 4),
+                http_timeout_s=cfg.get("pmc", {}).get("http", {}).get("timeout_s", 30),
+                retry_backoff_base_s=cfg.get("pmc", {}).get("http", {}).get("retry_backoff_base_s", 2.0),
+                retry_backoff_max_s=cfg.get("pmc", {}).get("http", {}).get("retry_backoff_max_s", 30.0),
                 cache=cache,
             ).fetch()
         elif source == "pdf":
@@ -445,6 +461,7 @@ async def build_index(
                 sensitivity=local_cfg.get("sensitivity", "internal"),
                 owner=local_cfg.get("owner"),
                 retention_policy=local_cfg.get("retention_policy", "internal-project-storage"),
+                text_suffixes=local_cfg.get("text_suffixes"),
             ).fetch()
         elif source in LOCAL_TABLE_SOURCES:
             local_cfg = local_source_config(cfg, source)
@@ -457,6 +474,7 @@ async def build_index(
                 owner=local_cfg.get("owner"),
                 retention_policy=local_cfg.get("retention_policy", "internal-project-storage"),
                 max_rows=local_cfg.get("max_rows", 500),
+                table_suffixes=local_cfg.get("table_suffixes"),
             ).fetch()
         else:
             raise ValueError(f"Unknown source: {source}")
@@ -468,20 +486,28 @@ async def build_index(
 
     doc_count = 0
     chunk_count = 0
-    deduplicator = Deduplicator()
+    dedup_cfg = cfg.get("deduplication", {})
+    dedup_enabled = bool(dedup_cfg.get("enabled", True))
+    deduplicator = Deduplicator(
+        title_threshold=float(dedup_cfg.get("title_threshold", 0.92)),
+        match_on_pmid=bool(dedup_cfg.get("match_on_pmid", True)),
+        match_on_document_id=bool(dedup_cfg.get("match_on_document_id", True)),
+        match_on_title=bool(dedup_cfg.get("match_on_title", True)),
+    )
 
-    if from_date is not None and source == "pubmed_abstract":
+    if dedup_enabled and from_date is not None and source == "pubmed_abstract":
         deduplicator.load_existing_pmids(await load_existing_pubmed_pmids(conn))
 
     try:
         processed_docs: list[NormalizedDocument] = []
         for doc in documents:
-            if deduplicator.is_duplicate(doc):
+            if dedup_enabled and deduplicator.is_duplicate(doc):
                 continue
 
             # Upsert document
             doc_db_id = await upsert_document(conn, doc, manifest_id)
-            deduplicator.register(doc)
+            if dedup_enabled:
+                deduplicator.register(doc)
             doc_count += 1
             if write_queue:
                 processed_docs.append(doc)
@@ -512,7 +538,7 @@ async def build_index(
                 replace_existing_chunks = False
             chunk_count += len(chunks)
 
-            if doc_count % 100 == 0:
+            if progress_interval_documents > 0 and doc_count % progress_interval_documents == 0:
                 logger.info(f"Processed {doc_count} documents, {chunk_count} chunks")
                 await notify_progress(
                     progress_callback,
@@ -549,7 +575,7 @@ async def build_index(
         logger.info(
             "REMINDER: If this is the first load, create the IVFFlat index:\n"
             "  CREATE INDEX ix_chunks_embedding ON document_chunks\n"
-            "  USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);"
+            f"  USING ivfflat (embedding vector_cosine_ops) WITH (lists = {indexing_cfg.get('ivfflat_lists', 100)});"
         )
 
     await notify_progress(

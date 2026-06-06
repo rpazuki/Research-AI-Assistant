@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { AUTH_COOKIE_NAME } from "@/lib/auth";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { frontendConfig } from "@/lib/config";
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const response = await fetch(`${API_BASE}/api/v1/auth/login`, {
+  const response = await fetch(`${frontendConfig.backendApiUrl}${frontendConfig.backendApiVersionPath}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    cache: "no-store",
+    cache: frontendConfig.requestCache,
   });
 
   const payload = await response.json().catch(() => ({}));
@@ -22,10 +21,10 @@ export async function POST(request: Request) {
   nextResponse.cookies.set({
     name: AUTH_COOKIE_NAME,
     value: payload.access_token,
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
+    httpOnly: frontendConfig.authCookieHttpOnly,
+    sameSite: frontendConfig.authCookieSameSite,
+    secure: frontendConfig.authCookieSecure,
+    path: frontendConfig.authCookiePath,
     maxAge: payload.expires_in,
   });
   return nextResponse;

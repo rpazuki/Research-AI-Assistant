@@ -10,20 +10,17 @@ Usage:
 
 Outputs:
     - Console summary (recall@k, MRR, latency)
-    - evaluation/reports/eval_{timestamp}.jsonl (full results)
+    - evaluation/reports/eval_{mode}_{timestamp}.json (full results)
 """
 
 import argparse
 import json
 import time
 from datetime import datetime
-from pathlib import Path
 
 import httpx
 
-BENCHMARK_FILE = Path(__file__).parent / "benchmark" / "questions.jsonl"
-REPORTS_DIR = Path(__file__).parent / "reports"
-REPORTS_DIR.mkdir(exist_ok=True)
+from evaluation.config import EvaluationConfig, load_evaluation_config
 
 
 def _parse_sse_stream(response: httpx.Response) -> tuple[str, list[dict], int | None]:
@@ -50,9 +47,13 @@ def _parse_sse_stream(response: httpx.Response) -> tuple[str, list[dict], int | 
     return "".join(answer_parts), sources, latency_ms
 
 
-def load_questions(question_id: str | None = None) -> list[dict]:
+def load_questions(
+    question_id: str | None = None,
+    config: EvaluationConfig | None = None,
+) -> list[dict]:
+    active_config = config or load_evaluation_config()
     questions = []
-    with open(BENCHMARK_FILE) as f:
+    with active_config.benchmark_file.open(encoding="utf-8") as f:
         for line in f:
             q = json.loads(line)
             if question_id is None or q["id"] == question_id:
@@ -77,12 +78,18 @@ def compute_mrr(retrieved_pmids: list[str], expected_pmids: list[str], k: int = 
     return 0.0
 
 
-def run_retrieval_eval(questions: list[dict], api_url: str, token: str) -> dict:
+def run_retrieval_eval(
+    questions: list[dict],
+    api_url: str,
+    token: str,
+    config: EvaluationConfig | None = None,
+) -> dict:
     """Call /search for each question and compute recall@k and MRR."""
+    active_config = config or load_evaluation_config()
     results = []
     recalls_5, recalls_10, mrrs = [], [], []
 
-    with httpx.Client(timeout=30) as client:
+    with httpx.Client(timeout=active_config.retrieval_timeout_s) as client:
         for q in questions:
             if "expected_pmids" not in q or not q["expected_pmids"]:
                 continue
@@ -92,7 +99,7 @@ def run_retrieval_eval(questions: list[dict], api_url: str, token: str) -> dict:
                 resp = client.post(
                     f"{api_url}/api/v1/search",
                     headers={"Authorization": f"Bearer {token}"},
-                    json={"query": q["question"], "top_k": 20},
+                    json={"query": q["question"], "top_k": active_config.retrieval_top_k},
                 )
                 resp.raise_for_status()
                 chunks = resp.json()
@@ -101,7 +108,7 @@ def run_retrieval_eval(questions: list[dict], api_url: str, token: str) -> dict:
                 retrieved_pmids = [c.get("pmid") for c in chunks if c.get("pmid")]
                 r5 = compute_recall_at_k(retrieved_pmids, q["expected_pmids"], 5)
                 r10 = compute_recall_at_k(retrieved_pmids, q["expected_pmids"], 10)
-                mrr = compute_mrr(retrieved_pmids, q["expected_pmids"])
+                mrr = compute_mrr(retrieved_pmids, q["expected_pmids"], active_config.mrr_at_k)
 
                 recalls_5.append(r5)
                 recalls_10.append(r10)
@@ -134,20 +141,29 @@ def run_retrieval_eval(questions: list[dict], api_url: str, token: str) -> dict:
     return {"summary": summary, "results": results}
 
 
-def run_rag_eval(questions: list[dict], api_url: str, token: str) -> dict:
+def run_rag_eval(
+    questions: list[dict],
+    api_url: str,
+    token: str,
+    config: EvaluationConfig | None = None,
+) -> dict:
     """
     Create a throwaway session and run each question through the full RAG pipeline.
     Records response text, sources, and latency.
     Human scoring of answer quality is done manually using the saved report.
     """
+    active_config = config or load_evaluation_config()
     results = []
 
-    with httpx.Client(timeout=120) as client:
+    with httpx.Client(timeout=active_config.rag_timeout_s) as client:
         # Create an evaluation session
         session_resp = client.post(
             f"{api_url}/api/v1/chat/sessions",
             headers={"Authorization": f"Bearer {token}"},
-            json={"mode": "researcher", "title": f"eval_{datetime.now().isoformat()}"},
+            json={
+                "mode": active_config.session_mode,
+                "title": f"{active_config.report_prefix}_{datetime.now().isoformat()}",
+            },
         )
         session_resp.raise_for_status()
         session_id = session_resp.json()["id"]
@@ -164,7 +180,7 @@ def run_rag_eval(questions: list[dict], api_url: str, token: str) -> dict:
                         "Authorization": f"Bearer {token}",
                         "Content-Type": "application/json",
                     },
-                    json={"query": q["question"], "mode": "researcher"},
+                    json={"query": q["question"], "mode": active_config.session_mode},
                 ) as response:
                     response.raise_for_status()
                     answer_text, sources, latency_ms = _parse_sse_stream(response)
@@ -190,25 +206,30 @@ def run_rag_eval(questions: list[dict], api_url: str, token: str) -> dict:
 
 
 def main():
+    config = load_evaluation_config()
     parser = argparse.ArgumentParser(description="RLALab AI Evaluation Runner")
-    parser.add_argument("--mode", choices=["retrieval", "rag"], required=True)
-    parser.add_argument("--api-url", default="http://localhost:8000")
-    parser.add_argument("--token", required=True, help="JWT bearer token")
-    parser.add_argument("--question-id", help="Run a single question by ID")
+    parser.add_argument("--mode", choices=["retrieval", "rag"], default=config.default_mode)
+    parser.add_argument("--api-url", default=config.api_url)
+    parser.add_argument("--token", default=config.token, help="JWT bearer token")
+    parser.add_argument("--question-id", default=config.question_id, help="Run a single question by ID")
     args = parser.parse_args()
 
-    questions = load_questions(args.question_id)
+    if not args.token:
+        parser.error("A JWT bearer token is required via --token or EVALUATION_TOKEN")
+
+    questions = load_questions(args.question_id, config)
     print(f"Loaded {len(questions)} questions. Mode: {args.mode}")
 
     if args.mode == "retrieval":
-        report = run_retrieval_eval(questions, args.api_url, args.token)
+        report = run_retrieval_eval(questions, args.api_url, args.token, config)
     else:
-        report = run_rag_eval(questions, args.api_url, args.token)
+        report = run_rag_eval(questions, args.api_url, args.token, config)
 
     # Save report
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_path = REPORTS_DIR / f"eval_{args.mode}_{timestamp}.json"
-    with open(report_path, "w") as f:
+    config.reports_dir.mkdir(exist_ok=True)
+    report_path = config.reports_dir / f"{config.report_prefix}_{args.mode}_{timestamp}.json"
+    with report_path.open("w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
     print(f"\nReport saved: {report_path}")
 

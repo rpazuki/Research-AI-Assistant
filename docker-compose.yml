@@ -25,6 +25,7 @@ services:
     container_name: rlalab_backend
     env_file: .env
     environment:
+      APP_ENV: development
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/rlalab_ai
     ports:
       - "8000:8000"
@@ -44,6 +45,7 @@ services:
     container_name: rlalab_ingestion_worker
     env_file: .env
     environment:
+      APP_ENV: development
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/rlalab_ai
     depends_on:
       db:
@@ -62,6 +64,7 @@ services:
       dockerfile: Dockerfile
     container_name: rlalab_frontend
     environment:
+      FRONTEND_ENV: development
       NEXT_PUBLIC_API_URL: http://backend:8000
     ports:
       - "3000:3000"

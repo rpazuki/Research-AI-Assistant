@@ -3,6 +3,7 @@ from pipelines.indexing.build_index import (
     batched,
     documents_from_cached_lab_text,
     documents_from_cached_pdf_text,
+    embedding_batch_size_for_source,
     load_pmc_ids,
     open_or_create_cache_from_path,
     validate_index_embedding,
@@ -32,6 +33,18 @@ def test_validate_index_embedding_rejects_non_matching_dimensions() -> None:
 
 def test_batched_splits_items_into_fixed_size_batches() -> None:
     assert list(batched([1, 2, 3, 4, 5], 2)) == [[1, 2], [3, 4], [5]]
+
+
+def test_embedding_batch_size_uses_source_override_then_default() -> None:
+    cfg = {
+        "indexing": {
+            "embedding_batch_size": 3,
+            "embedding_batch_size_by_source": {"pubmed_abstract": 11},
+        }
+    }
+
+    assert embedding_batch_size_for_source(cfg, "pubmed_abstract") == 11
+    assert embedding_batch_size_for_source(cfg, "pmc_fulltext") == 3
 
 
 def test_open_or_create_cache_from_path_initializes_ui_default_cache(tmp_path) -> None:

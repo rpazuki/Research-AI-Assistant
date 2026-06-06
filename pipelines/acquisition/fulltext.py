@@ -24,8 +24,9 @@ from pipelines.corpus_cache import (
     utc_now,
     write_acquisition_queue,
 )
+from pipelines.config import load_pipeline_defaults
 
-LICENSED_ACCESS_METHODS = {
+DEFAULT_LICENSED_ACCESS_METHODS = {
     "imperial-library",
     "imperial-vpn",
     "shibboleth",
@@ -34,7 +35,7 @@ LICENSED_ACCESS_METHODS = {
     "manual-upload",
 }
 
-ALLOWED_ASSET_TYPES = {
+DEFAULT_ALLOWED_ASSET_TYPES = {
     ".pdf": "licensed_pdf",
     ".xml": "licensed_xml",
     ".txt": "licensed_text",
@@ -56,6 +57,30 @@ BATCH_FIELDS = [
 ]
 
 
+def acquisition_config() -> dict[str, Any]:
+    return load_pipeline_defaults().get("acquisition", {})
+
+
+def licensed_access_methods() -> set[str]:
+    configured = acquisition_config().get("allowed_access_methods")
+    return set(configured or DEFAULT_LICENSED_ACCESS_METHODS)
+
+
+def allowed_asset_types() -> dict[str, str]:
+    configured = acquisition_config().get("allowed_asset_suffixes")
+    if not configured:
+        return dict(DEFAULT_ALLOWED_ASSET_TYPES)
+    return {
+        suffix.lower(): DEFAULT_ALLOWED_ASSET_TYPES.get(suffix.lower(), "licensed_file")
+        for suffix in configured
+    }
+
+
+def acquisition_default(name: str, fallback: str) -> str:
+    value = acquisition_config().get(name)
+    return str(value) if value else fallback
+
+
 def acquisition_guidance() -> str:
     return (
         "Use an approved Imperial/library route in a normal browser session. "
@@ -66,8 +91,9 @@ def acquisition_guidance() -> str:
 
 
 def ensure_allowed_access_method(access_method: str) -> None:
-    if access_method not in LICENSED_ACCESS_METHODS:
-        allowed = ", ".join(sorted(LICENSED_ACCESS_METHODS))
+    allowed_methods = licensed_access_methods()
+    if access_method not in allowed_methods:
+        allowed = ", ".join(sorted(allowed_methods))
         raise ValueError(f"Unknown access method '{access_method}'. Allowed: {allowed}")
 
 
@@ -170,9 +196,10 @@ def register_manual_asset(
         raise FileNotFoundError(file_path)
 
     suffix = file_path.suffix.lower()
-    asset_type = ALLOWED_ASSET_TYPES.get(suffix)
+    configured_asset_types = allowed_asset_types()
+    asset_type = configured_asset_types.get(suffix)
     if asset_type is None:
-        allowed = ", ".join(sorted(ALLOWED_ASSET_TYPES))
+        allowed = ", ".join(sorted(configured_asset_types))
         raise ValueError(f"Unsupported full-text asset type '{suffix}'. Allowed: {allowed}")
 
     digest = sha256_file(file_path)
@@ -445,14 +472,14 @@ def main() -> None:
     register.add_argument("--cache", required=True)
     register.add_argument("--file", required=True)
     register.add_argument("--document-id", required=True)
-    register.add_argument("--access-status", default="licensed-access")
-    register.add_argument("--access-method", required=True, choices=sorted(LICENSED_ACCESS_METHODS))
+    register.add_argument("--access-status", default=acquisition_default("default_access_status", "licensed-access"))
+    register.add_argument("--access-method", required=True, choices=sorted(licensed_access_methods()))
     register.add_argument("--source-url")
     register.add_argument("--license")
     register.add_argument("--terms-note")
     register.add_argument("--acquired-by")
-    register.add_argument("--sensitivity", default="licensed", choices=sorted(SENSITIVITY_VALUES))
-    register.add_argument("--retention-policy", default="internal-project-storage")
+    register.add_argument("--sensitivity", default=acquisition_default("default_sensitivity", "licensed"), choices=sorted(SENSITIVITY_VALUES))
+    register.add_argument("--retention-policy", default=acquisition_default("default_retention_policy", "internal-project-storage"))
     register.add_argument("--owner")
     register.add_argument("--notes")
     register.set_defaults(func=_cmd_register_asset)
@@ -461,10 +488,10 @@ def main() -> None:
     batch.add_argument("--cache", required=True)
     batch.add_argument("--manifest", required=True)
     batch.add_argument("--base-dir", help="Resolve relative manifest file paths from this directory; defaults to manifest directory")
-    batch.add_argument("--default-access-method", choices=sorted(LICENSED_ACCESS_METHODS))
-    batch.add_argument("--default-access-status", default="licensed-access")
-    batch.add_argument("--default-sensitivity", default="licensed", choices=sorted(SENSITIVITY_VALUES))
-    batch.add_argument("--default-retention-policy", default="internal-project-storage")
+    batch.add_argument("--default-access-method", choices=sorted(licensed_access_methods()))
+    batch.add_argument("--default-access-status", default=acquisition_default("default_access_status", "licensed-access"))
+    batch.add_argument("--default-sensitivity", default=acquisition_default("default_sensitivity", "licensed"), choices=sorted(SENSITIVITY_VALUES))
+    batch.add_argument("--default-retention-policy", default=acquisition_default("default_retention_policy", "internal-project-storage"))
     batch.add_argument("--dry-run", action="store_true", help="Validate manifest rows without copying or recording assets")
     batch.set_defaults(func=_cmd_register_batch)
 

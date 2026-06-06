@@ -177,10 +177,18 @@ class PMCFullTextIngester(BaseIngester):
         self,
         pmc_ids: list[str],
         sleep_s: float = 0.5,
+        http_attempts: int = 4,
+        http_timeout_s: int = 30,
+        retry_backoff_base_s: float = 2.0,
+        retry_backoff_max_s: float = 30.0,
         cache: CorpusCache | None = None,
     ) -> None:
         self.pmc_ids = pmc_ids
         self.sleep_s = sleep_s
+        self.http_attempts = http_attempts
+        self.http_timeout_s = http_timeout_s
+        self.retry_backoff_base_s = retry_backoff_base_s
+        self.retry_backoff_max_s = retry_backoff_max_s
         self.cache = cache
 
     def get_config_summary(self) -> dict:
@@ -328,9 +336,14 @@ class PMCFullTextIngester(BaseIngester):
             "&metadataPrefix=pmc"
         )
 
-    @staticmethod
-    def _fetch_xml(url: str) -> tuple[str, str]:
-        response = PMCFullTextIngester._get_with_backoff(url)
+    def _fetch_xml(self, url: str) -> tuple[str, str]:
+        response = self._get_with_backoff(
+            url,
+            attempts=self.http_attempts,
+            timeout_s=self.http_timeout_s,
+            retry_backoff_base_s=self.retry_backoff_base_s,
+            retry_backoff_max_s=self.retry_backoff_max_s,
+        )
         return response.text, str(response.url)
 
     @classmethod
@@ -376,9 +389,12 @@ class PMCFullTextIngester(BaseIngester):
         *,
         params: dict[str, str] | None = None,
         attempts: int = 4,
+        timeout_s: int = 30,
+        retry_backoff_base_s: float = 2.0,
+        retry_backoff_max_s: float = 30.0,
     ) -> httpx.Response:
         last_error: httpx.HTTPStatusError | None = None
-        with httpx.Client(timeout=30, follow_redirects=True, headers={"Accept-Encoding": "gzip, deflate"}) as client:
+        with httpx.Client(timeout=timeout_s, follow_redirects=True, headers={"Accept-Encoding": "gzip, deflate"}) as client:
             for attempt in range(attempts):
                 response = client.get(url, params=params)
                 if response.status_code != 429:
@@ -394,7 +410,7 @@ class PMCFullTextIngester(BaseIngester):
                 if retry_after and retry_after.isdigit():
                     sleep_s = float(retry_after)
                 else:
-                    sleep_s = min(30.0, 2.0 * (2 ** attempt))
+                    sleep_s = min(retry_backoff_max_s, retry_backoff_base_s * (2 ** attempt))
                 logger.warning("PMC request rate-limited; sleeping %.1fs before retry", sleep_s)
                 time.sleep(sleep_s)
 

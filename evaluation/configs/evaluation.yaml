@@ -1,0 +1,29 @@
+defaults:
+  evaluation_env: "development"
+  api_url: "http://localhost:8000"
+  default_mode: "retrieval"
+  question_id: null
+  token: ""
+
+  benchmark_file: "benchmark/questions.jsonl"
+  reports_dir: "reports"
+  report_prefix: "eval"
+
+  retrieval_timeout_s: 30
+  rag_timeout_s: 120
+  retrieval_top_k: 20
+  mrr_at_k: 10
+  session_mode: "researcher"
+
+environments:
+  development:
+    evaluation_env: "development"
+    api_url: "http://localhost:8000"
+
+  production:
+    evaluation_env: "production"
+    api_url: "https://assistant.rlalab.imperial.ac.uk"
+
+  deployed:
+    evaluation_env: "production"
+    api_url: "https://assistant.rlalab.imperial.ac.uk"

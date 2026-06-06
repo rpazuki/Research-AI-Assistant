@@ -18,28 +18,43 @@ Typical usage in the indexing pipeline:
 
 import re
 import unicodedata
+from difflib import SequenceMatcher
 
 
 class Deduplicator:
-    def __init__(self, title_threshold: float = 0.92) -> None:
+    def __init__(
+        self,
+        title_threshold: float = 0.92,
+        *,
+        match_on_pmid: bool = True,
+        match_on_document_id: bool = True,
+        match_on_title: bool = True,
+    ) -> None:
         self._seen_pmids: set[str] = set()
         self._seen_doc_ids: set[str] = set()
         self._seen_title_keys: set[str] = set()
         self.title_threshold = title_threshold
+        self.match_on_pmid = match_on_pmid
+        self.match_on_document_id = match_on_document_id
+        self.match_on_title = match_on_title
 
     def is_duplicate(self, doc) -> bool:
         """Return True if this document has been seen before."""
         # Exact PMID match
-        if doc.pmid and doc.pmid in self._seen_pmids:
+        if self.match_on_pmid and doc.pmid and doc.pmid in self._seen_pmids:
             return True
         # Exact document_id match
-        if doc.document_id in self._seen_doc_ids:
+        if self.match_on_document_id and doc.document_id in self._seen_doc_ids:
             return True
         # Normalized title match (only for documents with a title)
-        if doc.title:
+        if self.match_on_title and doc.title:
             key = _normalize_title(doc.title)
             if key in self._seen_title_keys:
                 return True
+            return any(
+                SequenceMatcher(None, key, seen_key).ratio() >= self.title_threshold
+                for seen_key in self._seen_title_keys
+            )
         return False
 
     def register(self, doc) -> None:

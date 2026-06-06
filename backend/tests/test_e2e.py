@@ -216,6 +216,16 @@ async def test_me_returns_current_user_profile() -> None:
     assert body["role"] == "researcher"
 
 
+@pytest.mark.asyncio
+async def test_health_endpoint_exposes_configured_app_name() -> None:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+        resp = await c.get("/health")
+
+    assert resp.status_code == 200
+    assert resp.json()["app"] == "RLALab AI Research Assistant"
+
+
 # ── Chat sessions CRUD ────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

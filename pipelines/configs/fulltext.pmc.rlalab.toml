@@ -17,3 +17,6 @@ sleep_between_batches_s = 1.0
 # Full-text chunks are much larger than abstracts; keep embedding batches small,
 # especially on Apple MPS where BERT attention memory grows quickly.
 embedding_batch_size = 1
+
+# Shared runtime defaults such as PMC HTTP retry/timeout settings,
+# deduplication, and progress cadence live in pipelines/configs/pipeline.defaults.yaml.
