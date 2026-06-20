@@ -388,8 +388,8 @@ known access/sensitivity values.
 
 ## Local Lab Data Adapters
 
-The lab-data adapters ingest local exports only. They do not connect to ELN (Elctronic Lab Notebook),
-LIMS (Lbratory Information Managment System), inventory systems, cloud storage, or remote services.
+The lab-data adapters ingest local exports only. They do not connect to ELN (Electronic Lab Notebook),
+LIMS (Laboratory Information Management System), inventory systems, cloud storage, or remote services.
 
 ### Protocols And SOPs
 
