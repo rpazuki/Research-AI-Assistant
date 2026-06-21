@@ -99,9 +99,8 @@ Expert reviewers can:
 - submit notes and recommended remediation;
 - mark assignments complete.
 
-Expert reviewers should not need admin privileges for their assigned review
-queue. This likely requires a new role or permission concept beyond the current
-`researcher` and `admin` roles.
+Expert reviewers do not need admin privileges for their assigned review queue.
+The implemented role model uses a dedicated `evaluator` role for this.
 
 ### Researcher
 
@@ -110,23 +109,13 @@ selected summary dashboards may be exposed if useful.
 
 ## Proposed Role And Permission Model
 
-The simplest safe path:
+The implemented safe path:
 
 - Keep `admin` for full evaluation management.
 - Add an `evaluator` role for users who can review assigned evaluation results.
-- Allow admins to assign review tasks to any active user.
+- Allow admins to assign review tasks to active `admin` or `evaluator` users.
 - Restrict non-admin reviewers to assignments where `assigned_to_user_id` equals
   their user id.
-
-Alternative if roles should remain small:
-
-- Keep user roles unchanged.
-- Add assignment-level permissions only.
-- A user can access `/evaluation/reviews` if they have at least one active
-  assignment.
-
-Recommendation: add an `evaluator` role if this workflow becomes routine. It is
-clearer in the UI and easier to audit.
 
 ## Database Schema Plan
 
@@ -791,4 +780,3 @@ The smallest useful slice:
 
 That slice gives the project a real evaluation workflow while leaving advanced
 comparison, release gates, and background execution for later.
-

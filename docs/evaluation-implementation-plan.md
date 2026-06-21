@@ -424,6 +424,78 @@ Failure mapping:
 
 The evaluation plan is complete only if it changes engineering priorities.
 
+## Workstream 14: Evaluation Documentation For Two Audiences
+
+The evaluation workflow needs thorough documentation that can be read by both
+biology-domain collaborators and data-science collaborators. These should be
+separate documents or clearly separated sections, because they answer different
+questions.
+
+### Biology-facing guide
+
+Audience: lab members, biology researchers, PhD students, postdocs, and expert
+reviewers who may not work daily with information retrieval metrics.
+
+Purpose:
+
+- explain why a scientific assistant must be evaluated before trust or release;
+- explain why fluent answers are not enough for literature-grounded research;
+- explain retrieval, grounding, citation faithfulness, refusal behavior, and
+  corpus coverage in plain language;
+- show what expert reviewers are being asked to judge and why their labels
+  matter;
+- describe how low early scores should be interpreted as a diagnostic signal,
+  not as failure of the project;
+- explain how benchmark questions map to real lab use cases.
+
+Required topics:
+
+- what RAG is, using biology-friendly examples;
+- why gold PMIDs, DOIs, answer outlines, and supporting evidence are needed;
+- difference between corpus gaps, retrieval failures, citation problems, and
+  hallucinations;
+- how out-of-scope and false-premise questions protect researchers;
+- how expert review improves the system over time;
+- what evidence is strong enough for abstract-only versus full-text evaluation;
+- how evaluation results become ingestion, retrieval, prompt, or UI actions.
+
+### Data-science and mathematical guide
+
+Audience: collaborators with machine-learning, data-science, statistics, or
+software engineering background.
+
+Purpose:
+
+- specify the benchmark data model and assumptions;
+- define each metric mathematically;
+- document how retrieval and RAG reports are computed;
+- make regression comparisons reproducible;
+- explain caveats such as incomplete labels, corpus coverage adjustment, and
+  metric instability on small benchmark sets.
+
+Required topics:
+
+- benchmark schema and label completeness states;
+- Recall@k, MRR@k, Precision@k, latency metrics, source-match checks, refusal
+  rate, and human review scores;
+- coverage-adjusted interpretation when gold documents are absent from the
+  corpus;
+- why retrieval and generation are evaluated separately;
+- how CSV/JSON/JSONL/Markdown report exports should be interpreted;
+- how run metadata captures corpus, model, prompt, and retrieval configuration;
+- how baseline/candidate regression comparisons should be made;
+- recommended statistical caution for small sample sizes and category-level
+  slices;
+- thresholds for beta release and how thresholds should evolve.
+
+Suggested artifacts:
+
+- `docs/evaluation-rationale-for-biologists.md`
+- `docs/evaluation-metrics-and-benchmarking.md`
+
+These docs should be written before the evaluation UI is considered ready for
+expert reviewer onboarding.
+
 ## Phases
 
 ### Phase 0: Lock evaluation scope
@@ -483,6 +555,14 @@ The evaluation plan is complete only if it changes engineering priorities.
 - Add dashboards or cumulative summaries.
 - Revisit thresholds after real usage data.
 
+### Phase 8: Document and onboard reviewers
+
+- Write the biology-facing evaluation rationale guide.
+- Write the data-science metrics and benchmarking guide.
+- Link both guides from the evaluation UI.
+- Use the biology-facing guide during expert reviewer onboarding.
+- Use the data-science guide for engineering regression and release decisions.
+
 ## Acceptance Criteria
 
 The evaluation phase is implemented when:
@@ -497,6 +577,8 @@ The evaluation phase is implemented when:
 - Citation faithfulness has an expert scoring path.
 - Regression comparison exists.
 - Evaluation results drive documented remediation decisions.
+- Biology-facing and data-science-facing evaluation documentation exists and is
+  linked from the reviewer/admin workflow.
 
 ## References
 
@@ -512,4 +594,3 @@ The evaluation phase is implemented when:
 - "Retrieval-augmented generation salvages poor performance from large language
   models in answering microbiology-specific multiple-choice questions."
   https://pubmed.ncbi.nlm.nih.gov/39932275
-

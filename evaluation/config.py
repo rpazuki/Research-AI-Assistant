@@ -36,6 +36,8 @@ class EvaluationConfig:
     retrieval_top_k: int = 20
     mrr_at_k: int = 10
     session_mode: str = "researcher"
+    output_format: str = "json"
+    fail_on_empty: bool = False
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -111,6 +113,8 @@ def load_evaluation_config(environment: str | None = None) -> EvaluationConfig:
         retrieval_top_k=int(values.get("retrieval_top_k", 20)),
         mrr_at_k=int(values.get("mrr_at_k", 10)),
         session_mode=str(values.get("session_mode", "researcher")),
+        output_format=str(values.get("output_format", "json")),
+        fail_on_empty=bool(values.get("fail_on_empty", False)),
     )
 
     env_overrides: dict[str, Any] = {}
@@ -126,5 +130,14 @@ def load_evaluation_config(environment: str | None = None) -> EvaluationConfig:
         env_overrides["benchmark_file"] = Path(os.environ["EVALUATION_BENCHMARK_FILE"]).expanduser()
     if os.environ.get("EVALUATION_RETRIEVAL_TOP_K"):
         env_overrides["retrieval_top_k"] = int(os.environ["EVALUATION_RETRIEVAL_TOP_K"])
+    if os.environ.get("EVALUATION_OUTPUT_FORMAT"):
+        env_overrides["output_format"] = os.environ["EVALUATION_OUTPUT_FORMAT"]
+    if os.environ.get("EVALUATION_FAIL_ON_EMPTY"):
+        env_overrides["fail_on_empty"] = os.environ["EVALUATION_FAIL_ON_EMPTY"].lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     return replace(config, **env_overrides) if env_overrides else config

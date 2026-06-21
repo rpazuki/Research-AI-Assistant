@@ -11,6 +11,7 @@ const getAdminUserSession = vi.fn();
 const getChatQuota = vi.fn();
 const getSession = vi.fn();
 const listAdminUserSessions = vi.fn();
+const listMyEvaluationReviewTasks = vi.fn();
 const listSessions = vi.fn();
 const deleteSession = vi.fn();
 const logout = vi.fn();
@@ -27,6 +28,7 @@ vi.mock("@/lib/api", () => ({
   getChatQuota: (...args: unknown[]) => getChatQuota(...args),
   getSession: (...args: unknown[]) => getSession(...args),
   listAdminUserSessions: (...args: unknown[]) => listAdminUserSessions(...args),
+  listMyEvaluationReviewTasks: (...args: unknown[]) => listMyEvaluationReviewTasks(...args),
   listSessions: (...args: unknown[]) => listSessions(...args),
   deleteSession: (...args: unknown[]) => deleteSession(...args),
   logout: (...args: unknown[]) => logout(...args),
@@ -42,6 +44,7 @@ describe("ChatClient", () => {
     getChatQuota.mockReset();
     getSession.mockReset();
     listAdminUserSessions.mockReset();
+    listMyEvaluationReviewTasks.mockReset();
     listSessions.mockReset();
     deleteSession.mockReset();
     logout.mockReset();
@@ -74,6 +77,7 @@ describe("ChatClient", () => {
       token_limit_reached: false,
       message: null,
     });
+    listMyEvaluationReviewTasks.mockResolvedValue([]);
     getSession.mockResolvedValue({
       id: "session-1",
       user_id: "current-user",

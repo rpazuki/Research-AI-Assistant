@@ -15,6 +15,7 @@ import {
   getChatQuota,
   getSession,
   listAdminUserSessions,
+  listMyEvaluationReviewTasks,
   listSessions,
   logout,
   streamMessage,
@@ -87,6 +88,7 @@ export default function ChatClient({
   const [isSavingTitle, setIsSavingTitle] = useState(false);
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [contextMenu, setContextMenu] = useState<SessionContextMenuState | null>(null);
+  const [pendingReviewCount, setPendingReviewCount] = useState<number | null>(null);
   const skipBlurSaveRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   
@@ -103,6 +105,7 @@ export default function ChatClient({
     void loadSessions();
     if (!isReadOnly) {
       void loadQuota();
+      void loadPendingReviewCount();
     }
   }, [adminUserId, isReadOnly]);
 
@@ -211,6 +214,21 @@ export default function ChatClient({
       if (err instanceof Error && err.message === "Unauthorized") {
         router.push("/login");
       }
+    }
+  }
+
+  async function loadPendingReviewCount() {
+    if (isReadOnly) {
+      return;
+    }
+
+    try {
+      const tasks = await listMyEvaluationReviewTasks();
+      setPendingReviewCount(
+        tasks.filter((task) => !["submitted", "cancelled"].includes(task.assignment.status)).length
+      );
+    } catch {
+      setPendingReviewCount(null);
     }
   }
 
@@ -630,6 +648,19 @@ export default function ChatClient({
                 className="w-full rounded-lg border border-gray-300 text-sm py-2 text-gray-700 hover:bg-gray-100 transition"
               >
                 Analytics
+              </button>
+            )}
+            {!isReadOnly && (
+              <button
+                onClick={() => router.push("/evaluation/reviews")}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 transition hover:bg-gray-100"
+              >
+                <span>Evaluation reviews</span>
+                {pendingReviewCount !== null && pendingReviewCount > 0 && (
+                  <span className="min-w-5 rounded-full bg-blue-600 px-1.5 py-0.5 text-xs font-semibold text-white">
+                    {pendingReviewCount}
+                  </span>
+                )}
               </button>
             )}
           </div>

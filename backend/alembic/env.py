@@ -14,6 +14,7 @@ Write those migrations manually using op.execute().
 """
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -21,10 +22,10 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.db.models import Base
-from app.core.config import settings
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+if os.environ.get("ALEMBIC_DATABASE_URL"):
+    config.set_main_option("sqlalchemy.url", os.environ["ALEMBIC_DATABASE_URL"])
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

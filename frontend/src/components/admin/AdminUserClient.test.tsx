@@ -121,7 +121,7 @@ describe("AdminUserClient", () => {
       id: "user-1",
       email: "researcher@example.com",
       full_name: "Researcher",
-      role: "admin",
+      role: "evaluator",
       is_active: true,
       token_limit: 1_000_000,
       token_limit_reached: false,
@@ -141,13 +141,14 @@ describe("AdminUserClient", () => {
 
     const roleSelect = await screen.findByLabelText("User role");
     expect(roleSelect).toHaveValue("researcher");
-    fireEvent.change(roleSelect, { target: { value: "admin" } });
+    expect(screen.getByRole("option", { name: "Evaluator" })).toBeInTheDocument();
+    fireEvent.change(roleSelect, { target: { value: "evaluator" } });
 
     await waitFor(() => {
-      expect(updateAdminUserRole).toHaveBeenCalledWith("user-1", "admin");
+      expect(updateAdminUserRole).toHaveBeenCalledWith("user-1", "evaluator");
     });
     await waitFor(() => {
-      expect(screen.getByLabelText("User role")).toHaveValue("admin");
+      expect(screen.getByLabelText("User role")).toHaveValue("evaluator");
     });
   });
 

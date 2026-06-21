@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
@@ -21,14 +22,14 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: str | None = None
-    role: str = "researcher"
+    role: Literal["researcher", "evaluator", "admin"] = "researcher"
 
 
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str
     full_name: str | None
-    role: str
+    role: Literal["researcher", "evaluator", "admin"]
     is_active: bool
 
     model_config = {"from_attributes": True}

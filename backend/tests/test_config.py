@@ -1,67 +1,29 @@
 from __future__ import annotations
 
-import textwrap
-
 from app.core.config import Settings
 
 
-def test_backend_yaml_defaults_are_loaded(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "backend.yaml"
-    config_path.write_text(
-        textwrap.dedent(
-            """
-            defaults:
-              app_name: "Configured Assistant"
-              app_env: "development"
-              log_level: "INFO"
-              cors_origins:
-                - "http://localhost:3000"
-              retrieval_final_top_k: 7
-            environments:
-              production:
-                app_env: "production"
-                log_level: "WARNING"
-                cors_origins:
-                  - "https://assistant.example"
-            """
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("BACKEND_CONFIG_FILE", str(config_path))
+def test_backend_settings_use_defaults_without_environment(monkeypatch) -> None:
     monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("RETRIEVAL_FINAL_TOP_K", raising=False)
 
-    settings = Settings(_env_file=())
+    settings = Settings()
 
-    assert settings.app_name == "Configured Assistant"
     assert settings.app_env == "development"
-    assert settings.retrieval_final_top_k == 7
+    assert settings.database_url == "postgresql+asyncpg://postgres:postgres@db:5432/rlalab_ai"
+    assert settings.retrieval_final_top_k == 5
 
 
-def test_backend_environment_section_and_env_vars_override_yaml(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "backend.yaml"
-    config_path.write_text(
-        textwrap.dedent(
-            """
-            defaults:
-              app_env: "development"
-              log_level: "INFO"
-              retrieval_vector_top_k: 4
-            environments:
-              production:
-                app_env: "production"
-                log_level: "WARNING"
-                retrieval_vector_top_k: 11
-            """
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("BACKEND_CONFIG_FILE", str(config_path))
+def test_backend_settings_are_overridden_by_environment(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@db:5432/custom")
+    monkeypatch.setenv("RETRIEVAL_FINAL_TOP_K", "9")
+    monkeypatch.setenv("CORS_ORIGINS", '["https://assistant.example"]')
 
-    settings = Settings(_env_file=())
+    settings = Settings()
 
     assert settings.app_env == "production"
-    assert settings.log_level == "DEBUG"
-    assert settings.retrieval_vector_top_k == 11
+    assert settings.database_url == "postgresql+asyncpg://postgres:postgres@db:5432/custom"
+    assert settings.retrieval_final_top_k == 9
+    assert settings.cors_origins == ["https://assistant.example"]

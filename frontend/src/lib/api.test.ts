@@ -422,7 +422,7 @@ describe("admin user API", () => {
       id: "u1",
       email: "researcher@lab.ac.uk",
       full_name: "Researcher",
-      role: "admin",
+      role: "evaluator",
       is_active: true,
       token_limit: 1_000_000,
       token_limit_reached: false,
@@ -438,13 +438,13 @@ describe("admin user API", () => {
       },
     });
 
-    const user = await updateAdminUserRole("u1", "admin");
+    const user = await updateAdminUserRole("u1", "evaluator");
 
-    expect(user.role).toBe("admin");
+    expect(user.role).toBe("evaluator");
     const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call[0]).toBe("/api/backend/admin/users/u1");
     expect(call[1].method).toBe("PATCH");
-    expect(JSON.parse(call[1].body)).toEqual({ role: "admin" });
+    expect(JSON.parse(call[1].body)).toEqual({ role: "evaluator" });
   });
 
   it("sends invitations", async () => {

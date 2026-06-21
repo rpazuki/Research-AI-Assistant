@@ -56,9 +56,22 @@ def get_admin_user(current_user: Annotated[User, Depends(get_current_user)]) -> 
     return current_user
 
 
+def get_evaluation_reviewer_user(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Require a user allowed to complete assigned evaluation reviews."""
+    if current_user.role not in {"admin", "evaluator"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Evaluator access required",
+        )
+    return current_user
+
+
 # Type aliases for cleaner route signatures
 CurrentUser = Annotated[User, Depends(get_current_user)]
 AdminUser = Annotated[User, Depends(get_admin_user)]
+EvaluationReviewerUser = Annotated[User, Depends(get_evaluation_reviewer_user)]
 DBSession = Annotated[AsyncSession, Depends(get_db)]
 LLMDep = Annotated[LLMProvider, Depends(get_llm_provider)]
 EmbeddingDep = Annotated[EmbeddingModel, Depends(get_embedding_model)]

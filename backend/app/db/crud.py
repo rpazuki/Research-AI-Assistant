@@ -8,7 +8,7 @@ All functions accept an AsyncSession argument — never create sessions here.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Sequence
 
 from sqlalchemy import and_, distinct, func, not_, or_, select
@@ -19,6 +19,12 @@ from app.db.models import (
     ChatSession,
     Document,
     DocumentChunk,
+    EvaluationQuestion,
+    EvaluationQuestionSet,
+    EvaluationReview,
+    EvaluationReviewAssignment,
+    EvaluationRun,
+    EvaluationRunResult,
     Feedback,
     IngestionJob,
     IngestionManifest,
@@ -26,8 +32,17 @@ from app.db.models import (
     User,
     UserInvitation,
 )
-from app.schemas.auth import UserCreate
 from app.core.security import hash_password
+from app.schemas.auth import UserCreate
+from app.schemas.evaluation import (
+    EvaluationQuestionCreate,
+    EvaluationQuestionSetCreate,
+    EvaluationQuestionSetUpdate,
+    EvaluationQuestionUpdate,
+    EvaluationReviewCreate,
+    EvaluationReviewUpdate,
+    EvaluationRunCreate,
+)
 
 
 # ── Users ────────────────────────────────────────────────────────────────────
@@ -279,6 +294,541 @@ async def list_ingestion_cache_paths(db: AsyncSession) -> list[str]:
         .order_by(func.max(IngestionJob.created_at).desc())
     )
     return [str(row.cache_path) for row in result if row.cache_path]
+
+
+# ── Evaluation question bank ─────────────────────────────────────────────────
+
+async def create_evaluation_question_set(
+    db: AsyncSession,
+    *,
+    data: EvaluationQuestionSetCreate,
+    created_by_user_id: uuid.UUID,
+) -> EvaluationQuestionSet:
+    question_set = EvaluationQuestionSet(
+        name=data.name,
+        description=data.description,
+        status=data.status,
+        created_by_user_id=created_by_user_id,
+        metadata_=data.metadata,
+    )
+    db.add(question_set)
+    await db.flush()
+    return question_set
+
+
+async def list_evaluation_question_sets(db: AsyncSession) -> Sequence[EvaluationQuestionSet]:
+    result = await db.execute(
+        select(EvaluationQuestionSet).order_by(EvaluationQuestionSet.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+async def get_evaluation_question_set(
+    db: AsyncSession, question_set_id: uuid.UUID
+) -> EvaluationQuestionSet | None:
+    result = await db.execute(
+        select(EvaluationQuestionSet).where(EvaluationQuestionSet.id == question_set_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_evaluation_question_set_by_name(
+    db: AsyncSession, name: str
+) -> EvaluationQuestionSet | None:
+    result = await db.execute(
+        select(EvaluationQuestionSet).where(EvaluationQuestionSet.name == name)
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_evaluation_question_set(
+    db: AsyncSession,
+    *,
+    question_set: EvaluationQuestionSet,
+    data: EvaluationQuestionSetUpdate,
+) -> EvaluationQuestionSet:
+    update_data = data.model_dump(exclude_unset=True)
+    if "metadata" in update_data:
+        question_set.metadata_ = update_data.pop("metadata")
+    for key, value in update_data.items():
+        setattr(question_set, key, value)
+    await db.flush()
+    return question_set
+
+
+async def get_evaluation_question_set_counts(
+    db: AsyncSession, question_set_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, dict[str, int]]:
+    if not question_set_ids:
+        return {}
+    result = await db.execute(
+        select(
+            EvaluationQuestion.question_set_id,
+            func.count(EvaluationQuestion.id).label("question_count"),
+            func.count(EvaluationQuestion.id)
+            .filter(EvaluationQuestion.review_status == "label_complete")
+            .label("label_complete_count"),
+        )
+        .where(
+            EvaluationQuestion.question_set_id.in_(list(question_set_ids)),
+            EvaluationQuestion.archived_at.is_(None),
+        )
+        .group_by(EvaluationQuestion.question_set_id)
+    )
+    return {
+        row.question_set_id: {
+            "question_count": int(row.question_count or 0),
+            "label_complete_count": int(row.label_complete_count or 0),
+        }
+        for row in result
+    }
+
+
+async def create_evaluation_question(
+    db: AsyncSession,
+    *,
+    question_set_id: uuid.UUID,
+    data: EvaluationQuestionCreate,
+    created_by_user_id: uuid.UUID,
+) -> EvaluationQuestion:
+    question = EvaluationQuestion(
+        question_set_id=question_set_id,
+        external_id=data.external_id,
+        question=data.question,
+        category=data.category,
+        difficulty=data.difficulty,
+        domain_fit=data.domain_fit,
+        expected_behavior=data.expected_behavior,
+        expected_keywords=data.expected_keywords,
+        expected_pmids=data.expected_pmids,
+        expected_dois=data.expected_dois,
+        gold_answer_outline=data.gold_answer_outline,
+        supporting_evidence=[item.model_dump() for item in data.supporting_evidence],
+        requires_full_text=data.requires_full_text,
+        review_status=data.review_status,
+        expert_owner_user_id=data.expert_owner_user_id,
+        notes=data.notes,
+        created_by_user_id=created_by_user_id,
+    )
+    db.add(question)
+    await db.flush()
+    return question
+
+
+async def list_evaluation_questions(
+    db: AsyncSession,
+    *,
+    question_set_id: uuid.UUID,
+    include_archived: bool = False,
+    category: str | None = None,
+    difficulty: str | None = None,
+    review_status: str | None = None,
+) -> Sequence[EvaluationQuestion]:
+    conditions = [EvaluationQuestion.question_set_id == question_set_id]
+    if not include_archived:
+        conditions.append(EvaluationQuestion.archived_at.is_(None))
+    if category:
+        conditions.append(EvaluationQuestion.category == category)
+    if difficulty:
+        conditions.append(EvaluationQuestion.difficulty == difficulty)
+    if review_status:
+        conditions.append(EvaluationQuestion.review_status == review_status)
+
+    result = await db.execute(
+        select(EvaluationQuestion)
+        .where(*conditions)
+        .order_by(EvaluationQuestion.external_id)
+    )
+    return result.scalars().all()
+
+
+async def get_evaluation_question(
+    db: AsyncSession, question_id: uuid.UUID
+) -> EvaluationQuestion | None:
+    result = await db.execute(
+        select(EvaluationQuestion).where(EvaluationQuestion.id == question_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_evaluation_question_by_external_id(
+    db: AsyncSession,
+    *,
+    question_set_id: uuid.UUID,
+    external_id: str,
+) -> EvaluationQuestion | None:
+    result = await db.execute(
+        select(EvaluationQuestion).where(
+            EvaluationQuestion.question_set_id == question_set_id,
+            EvaluationQuestion.external_id == external_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_evaluation_question(
+    db: AsyncSession,
+    *,
+    question: EvaluationQuestion,
+    data: EvaluationQuestionUpdate,
+    archived_at: datetime | None = None,
+) -> EvaluationQuestion:
+    update_data = data.model_dump(exclude_unset=True)
+    archive_requested = update_data.pop("archived", None)
+    if "supporting_evidence" in update_data and update_data["supporting_evidence"] is not None:
+        update_data["supporting_evidence"] = [
+            item.model_dump() for item in update_data["supporting_evidence"]
+        ]
+    for key, value in update_data.items():
+        setattr(question, key, value)
+    if archive_requested is True:
+        question.archived_at = archived_at or datetime.now(timezone.utc)
+    elif archive_requested is False:
+        question.archived_at = None
+    await db.flush()
+    return question
+
+
+async def get_evaluation_questions_by_external_ids(
+    db: AsyncSession,
+    *,
+    question_set_id: uuid.UUID,
+    external_ids: Sequence[str],
+) -> dict[str, EvaluationQuestion]:
+    if not external_ids:
+        return {}
+    result = await db.execute(
+        select(EvaluationQuestion).where(
+            EvaluationQuestion.question_set_id == question_set_id,
+            EvaluationQuestion.external_id.in_(list(external_ids)),
+        )
+    )
+    return {question.external_id: question for question in result.scalars().all()}
+
+
+async def create_evaluation_run(
+    db: AsyncSession,
+    *,
+    data: EvaluationRunCreate,
+    started_by_user_id: uuid.UUID,
+    started_at: datetime | None = None,
+    completed_at: datetime | None = None,
+    document_count: int | None = None,
+    chunk_count: int | None = None,
+    embedding_model: str | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    git_commit: str | None = None,
+    runner_version: str | None = None,
+    summary_metrics: dict | None = None,
+    error_message: str | None = None,
+    artifact_paths: dict | None = None,
+) -> EvaluationRun:
+    run = EvaluationRun(
+        name=data.name,
+        mode=data.mode,
+        status=data.status,
+        question_set_id=data.question_set_id,
+        started_by_user_id=started_by_user_id,
+        started_at=started_at,
+        completed_at=completed_at,
+        corpus_manifest_id=data.corpus_manifest_id,
+        document_count=document_count,
+        chunk_count=chunk_count,
+        embedding_model=embedding_model,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        retrieval_config=data.retrieval_config,
+        reranker_config=data.reranker_config,
+        llm_provider=data.llm_provider,
+        llm_model=data.llm_model,
+        prompt_version=data.prompt_version,
+        git_commit=git_commit,
+        runner_version=runner_version,
+        summary_metrics=summary_metrics or {},
+        error_message=error_message,
+        artifact_paths=artifact_paths or {},
+        metadata_=data.metadata,
+    )
+    db.add(run)
+    await db.flush()
+    return run
+
+
+async def list_evaluation_runs(
+    db: AsyncSession,
+    *,
+    limit: int = 50,
+    status: str | None = None,
+    mode: str | None = None,
+    question_set_id: uuid.UUID | None = None,
+) -> Sequence[EvaluationRun]:
+    conditions = []
+    if status:
+        conditions.append(EvaluationRun.status == status)
+    if mode:
+        conditions.append(EvaluationRun.mode == mode)
+    if question_set_id:
+        conditions.append(EvaluationRun.question_set_id == question_set_id)
+
+    query = select(EvaluationRun)
+    if conditions:
+        query = query.where(*conditions)
+    result = await db.execute(query.order_by(EvaluationRun.created_at.desc()).limit(limit))
+    return result.scalars().all()
+
+
+async def get_evaluation_run(db: AsyncSession, run_id: uuid.UUID) -> EvaluationRun | None:
+    result = await db.execute(select(EvaluationRun).where(EvaluationRun.id == run_id))
+    return result.scalar_one_or_none()
+
+
+async def update_evaluation_run(
+    db: AsyncSession,
+    *,
+    run: EvaluationRun,
+    status: str | None = None,
+    started_at: datetime | None = None,
+    completed_at: datetime | None = None,
+    document_count: int | None = None,
+    chunk_count: int | None = None,
+    embedding_model: str | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    retrieval_config: dict | None = None,
+    reranker_config: dict | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+    prompt_version: str | None = None,
+    git_commit: str | None = None,
+    runner_version: str | None = None,
+    summary_metrics: dict | None = None,
+    error_message: str | None = None,
+    artifact_paths: dict | None = None,
+    metadata: dict | None = None,
+) -> EvaluationRun:
+    updates = {
+        "status": status,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "document_count": document_count,
+        "chunk_count": chunk_count,
+        "embedding_model": embedding_model,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "retrieval_config": retrieval_config,
+        "reranker_config": reranker_config,
+        "llm_provider": llm_provider,
+        "llm_model": llm_model,
+        "prompt_version": prompt_version,
+        "git_commit": git_commit,
+        "runner_version": runner_version,
+        "summary_metrics": summary_metrics,
+        "error_message": error_message,
+        "artifact_paths": artifact_paths,
+    }
+    for key, value in updates.items():
+        if value is not None:
+            setattr(run, key, value)
+    if metadata is not None:
+        run.metadata_ = metadata
+    await db.flush()
+    return run
+
+
+async def update_evaluation_run_progress(
+    db: AsyncSession,
+    run: EvaluationRun,
+    progress_message: str,
+) -> EvaluationRun:
+    run.metadata_ = {**(run.metadata_ or {}), "progress_message": progress_message}
+    await db.flush()
+    return run
+
+
+async def create_evaluation_run_result(
+    db: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    question_id: uuid.UUID | None,
+    status: str,
+    question_snapshot: dict,
+    retrieved_sources: list[dict] | None = None,
+    retrieved_pmids: list[str] | None = None,
+    retrieved_dois: list[str] | None = None,
+    retrieved_chunk_ids: list[uuid.UUID] | None = None,
+    expected_pmids_present: bool | None = None,
+    expected_dois_present: bool | None = None,
+    coverage_status: str = "not_applicable",
+    recall_at_5: float | None = None,
+    recall_at_10: float | None = None,
+    recall_at_20: float | None = None,
+    mrr_at_10: float | None = None,
+    precision_at_k: float | None = None,
+    response_text: str | None = None,
+    response_sources: list[dict] | None = None,
+    latency_ms: int | None = None,
+    time_to_first_token_ms: int | None = None,
+    failure_category: str | None = None,
+    error_message: str | None = None,
+) -> EvaluationRunResult:
+    result = EvaluationRunResult(
+        run_id=run_id,
+        question_id=question_id,
+        status=status,
+        question_snapshot=question_snapshot,
+        retrieved_sources=retrieved_sources or [],
+        retrieved_pmids=retrieved_pmids or [],
+        retrieved_dois=retrieved_dois or [],
+        retrieved_chunk_ids=retrieved_chunk_ids or [],
+        expected_pmids_present=expected_pmids_present,
+        expected_dois_present=expected_dois_present,
+        coverage_status=coverage_status,
+        recall_at_5=recall_at_5,
+        recall_at_10=recall_at_10,
+        recall_at_20=recall_at_20,
+        mrr_at_10=mrr_at_10,
+        precision_at_k=precision_at_k,
+        response_text=response_text,
+        response_sources=response_sources or [],
+        latency_ms=latency_ms,
+        time_to_first_token_ms=time_to_first_token_ms,
+        failure_category=failure_category,
+        error_message=error_message,
+    )
+    db.add(result)
+    await db.flush()
+    return result
+
+
+async def list_evaluation_run_results(
+    db: AsyncSession, *, run_id: uuid.UUID
+) -> Sequence[EvaluationRunResult]:
+    result = await db.execute(
+        select(EvaluationRunResult)
+        .where(EvaluationRunResult.run_id == run_id)
+        .order_by(EvaluationRunResult.created_at)
+    )
+    return result.scalars().all()
+
+
+async def get_evaluation_run_result(
+    db: AsyncSession, result_id: uuid.UUID
+) -> EvaluationRunResult | None:
+    result = await db.execute(
+        select(EvaluationRunResult).where(EvaluationRunResult.id == result_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def delete_evaluation_run_results(db: AsyncSession, *, run_id: uuid.UUID) -> None:
+    existing = await list_evaluation_run_results(db, run_id=run_id)
+    for result in existing:
+        await db.delete(result)
+    await db.flush()
+
+
+async def create_evaluation_review_assignment(
+    db: AsyncSession,
+    *,
+    run_result_id: uuid.UUID,
+    assigned_to_user_id: uuid.UUID,
+    assigned_by_user_id: uuid.UUID,
+    due_at: datetime | None = None,
+    notes: str | None = None,
+) -> EvaluationReviewAssignment:
+    assignment = EvaluationReviewAssignment(
+        run_result_id=run_result_id,
+        assigned_to_user_id=assigned_to_user_id,
+        assigned_by_user_id=assigned_by_user_id,
+        due_at=due_at,
+        notes=notes,
+    )
+    db.add(assignment)
+    await db.flush()
+    return assignment
+
+
+async def list_evaluation_review_assignments(
+    db: AsyncSession,
+    *,
+    run_id: uuid.UUID | None = None,
+    assigned_to_user_id: uuid.UUID | None = None,
+    status: str | None = None,
+) -> Sequence[EvaluationReviewAssignment]:
+    query = select(EvaluationReviewAssignment)
+    if run_id is not None:
+        query = query.join(EvaluationRunResult).where(EvaluationRunResult.run_id == run_id)
+    if assigned_to_user_id is not None:
+        query = query.where(EvaluationReviewAssignment.assigned_to_user_id == assigned_to_user_id)
+    if status is not None:
+        query = query.where(EvaluationReviewAssignment.status == status)
+    result = await db.execute(query.order_by(EvaluationReviewAssignment.created_at.desc()))
+    return result.scalars().all()
+
+
+async def get_evaluation_review_assignment(
+    db: AsyncSession, assignment_id: uuid.UUID
+) -> EvaluationReviewAssignment | None:
+    result = await db.execute(
+        select(EvaluationReviewAssignment).where(EvaluationReviewAssignment.id == assignment_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_evaluation_review_by_assignment(
+    db: AsyncSession, assignment_id: uuid.UUID
+) -> EvaluationReview | None:
+    result = await db.execute(
+        select(EvaluationReview).where(EvaluationReview.assignment_id == assignment_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_evaluation_review_assignment_status(
+    db: AsyncSession,
+    *,
+    assignment: EvaluationReviewAssignment,
+    status: str,
+    submitted_at: datetime | None = None,
+) -> EvaluationReviewAssignment:
+    assignment.status = status
+    if submitted_at is not None:
+        assignment.submitted_at = submitted_at
+    await db.flush()
+    return assignment
+
+
+async def upsert_evaluation_review(
+    db: AsyncSession,
+    *,
+    assignment: EvaluationReviewAssignment,
+    data: EvaluationReviewCreate | EvaluationReviewUpdate,
+    reviewer_user_id: uuid.UUID,
+    submitted: bool = False,
+) -> EvaluationReview:
+    existing = await db.execute(
+        select(EvaluationReview).where(EvaluationReview.assignment_id == assignment.id)
+    )
+    review = existing.scalar_one_or_none()
+    if review is None:
+        review = EvaluationReview(
+            assignment_id=assignment.id,
+            run_result_id=assignment.run_result_id,
+            reviewer_user_id=reviewer_user_id,
+        )
+        db.add(review)
+
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(review, key, value)
+    if submitted:
+        now = datetime.now(timezone.utc)
+        review.submitted_at = now
+        assignment.status = "submitted"
+        assignment.submitted_at = now
+    await db.flush()
+    return review
 
 
 async def request_ingestion_job_cancel(

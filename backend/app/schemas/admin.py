@@ -10,7 +10,7 @@ from pydantic import BaseModel, EmailStr, Field
 class UserAdminUpdate(BaseModel):
     is_active: bool | None = None
     token_limit: int | None = Field(default=None, ge=0)
-    role: Literal["researcher", "admin"] | None = None
+    role: Literal["researcher", "evaluator", "admin"] | None = None
 
 
 class InvitationSendRequest(BaseModel):

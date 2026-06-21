@@ -200,6 +200,7 @@ export default function AdminUserClient({ userId }: { userId: string }) {
                     aria-label="User role"
                   >
                     <option value="researcher">Researcher</option>
+                    <option value="evaluator">Evaluator</option>
                     <option value="admin">Admin</option>
                   </select>
                   {savingRole && <p className="mt-2 text-sm text-gray-500">Saving role...</p>}

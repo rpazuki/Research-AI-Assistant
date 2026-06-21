@@ -4,13 +4,13 @@ services:
     container_name: rlalab_db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: rlalab_ai
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d rlalab_ai"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -24,7 +24,9 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      APP_ENV: production
+      APP_ENV: ${APP_ENV}
+      DATABASE_URL: ${DATABASE_URL}
+      ALEMBIC_DATABASE_URL: ${DATABASE_URL}
     depends_on:
       db:
         condition: service_healthy
@@ -44,7 +46,9 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      APP_ENV: production
+      APP_ENV: ${APP_ENV}
+      DATABASE_URL: ${DATABASE_URL}
+      ALEMBIC_DATABASE_URL: ${DATABASE_URL}
     depends_on:
       db:
         condition: service_healthy
@@ -55,15 +59,38 @@ services:
       - corpus_data:/app/data
     command: python -m app.ingestion.worker
 
+  evaluation-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: rlalab_evaluation_worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_ENV: ${APP_ENV}
+      DATABASE_URL: ${DATABASE_URL}
+      ALEMBIC_DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - model_cache:/app/model_cache
+      - corpus_data:/app/data
+    command: python -m app.evaluation.worker
+
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: rlalab_frontend
     restart: unless-stopped
+    env_file: .env
     environment:
-      FRONTEND_ENV: production
-      NEXT_PUBLIC_API_URL: http://backend:8000
+      FRONTEND_ENV: ${FRONTEND_ENV}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_API_PROXY_PREFIX: ${NEXT_PUBLIC_API_PROXY_PREFIX}
     expose:
       - "3000"
     depends_on:

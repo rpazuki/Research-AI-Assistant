@@ -20,10 +20,6 @@ from pathlib import Path
 # Allow running from backend/ or from project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 
 async def main(email: str, password: str, full_name: str | None, role: str) -> None:
     from app.db.session import AsyncSessionLocal

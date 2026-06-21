@@ -111,36 +111,59 @@ SECRET_KEY=replace_with_32_byte_hex_string
 
 All other values in `.env` have working defaults for local development.
 
-## Configuration — Runtime Defaults
+## Configuration
 
-Runtime defaults are committed as YAML, split by application area:
+Runtime configuration is Docker-first and `.env`-first.
 
-- Backend: `backend/configs/backend.yaml`
-- Frontend: `frontend/configs/frontend.yaml`
-- Evaluation: `evaluation/configs/evaluation.yaml`
-- Pipelines: `pipelines/configs/pipeline.defaults.yaml` plus corpus-specific `pipelines/configs/*.toml`
+The root `.env` file is the single runtime reference point for the local and
+deployed Compose stacks. Docker Compose reads `.env` and injects the relevant
+variables into each container:
 
-Each YAML file has `defaults` and `environments` sections. Local development uses the `development` section. Deployed Compose sets `APP_ENV=production` and `FRONTEND_ENV=production`, which selects the production/deployed values. Environment variables and `.env` still override YAML, so secrets and installation-specific URLs should stay out of committed config.
+- `db` uses `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_HOST_PORT`.
+- `backend`, `ingestion-worker`, and `evaluation-worker` use `DATABASE_URL`, `APP_ENV`, secrets, LLM, NCBI, embedding, and retrieval variables.
+- `frontend` uses `FRONTEND_ENV`, `NEXT_PUBLIC_API_URL`, and `NEXT_PUBLIC_API_PROXY_PREFIX`.
 
-Useful overrides:
+The backend does not read `backend/configs/backend.yaml`; that file has been
+removed to avoid multiple competing sources for the same setting. Backend code
+reads process environment variables through `backend/app/core/config.py`.
+
+Important database URL distinction:
+
+- Inside Docker containers, use the Compose service name and container port:
+  `postgresql+asyncpg://postgres:postgres@db:5432/rlalab_ai`
+- From the host machine, use the published host port:
+  `postgresql+asyncpg://postgres:postgres@localhost:5433/rlalab_ai`
+
+Alembic is the one intentional exception. Its default connection string lives in
+`backend/alembic.ini`, because migrations are a schema-management operation
+rather than ordinary app runtime configuration. When the backend container runs
+`alembic upgrade head`, Compose passes `ALEMBIC_DATABASE_URL=${DATABASE_URL}` so
+the migration runs against `db:5432` inside Docker. When you run Alembic from the
+host, it uses `backend/alembic.ini` by default.
+
+For host-side migration:
 
 ```bash
-BACKEND_CONFIG_FILE=/path/to/backend.yaml
-FRONTEND_CONFIG_FILE=/path/to/frontend.yaml
-EVALUATION_CONFIG_FILE=/path/to/evaluation.yaml
-PIPELINE_CONFIG_FILE=/path/to/pipeline.defaults.yaml
-EVALUATION_API_URL=https://assistant.example
-EVALUATION_TOKEN=<jwt>
+docker compose up -d db
+cd backend
+.venv/bin/alembic upgrade head
+```
+
+For app runtime, prefer Docker:
+
+```bash
+docker compose up --build
 ```
 
 ### YAML vs. TOML — when to use which
 
-The project uses both formats on purpose. The dividing line is **runtime overlay vs. declarative pipeline data**, not personal preference — do not "unify" everything to one format.
+The backend runtime no longer uses YAML. Remaining config formats have narrower
+roles:
 
-- **YAML** — cross-component runtime/deployment overlay (`backend.yaml`, `frontend.yaml`, `evaluation.yaml`, `pipeline.defaults.yaml`). These share the `defaults` + `environments` overlay shape, are read by both Python (PyYAML) and the **frontend** (`js-yaml`), and benefit from YAML's readable nesting. YAML stays here primarily because the frontend has no stdlib TOML parser — keeping it YAML is what makes the loaders "seamless" across Python and TypeScript.
-- **TOML** — pipeline-local declarative corpus/ingestion configs (`pipelines/configs/*.toml`, e.g. `abstract.pubmed.rlalab.toml`, `admin_ingestion_defaults.toml`). These are Python-only, read via stdlib `tomllib`, and written by the admin ingestion editor (`backend/app/ingestion/admin_service.py`).
-
-Note: `pipeline.defaults.yaml` lives alongside the corpus `*.toml` files but belongs to the **YAML overlay family** (the cross-component runtime defaults), whereas the `*.toml` files are the declarative corpus definitions — that is why the `pipelines/configs/` folder mixes formats.
+- **`.env`** — runtime/container configuration and secrets for Compose-managed services.
+- **`backend/alembic.ini`** — Alembic migration connection settings for host-side schema updates.
+- **YAML** — non-backend-runtime tool configs such as `evaluation/configs/evaluation.yaml` and `pipelines/configs/pipeline.defaults.yaml`.
+- **TOML** — pipeline-local declarative corpus/ingestion configs (`pipelines/configs/*.toml`, e.g. `abstract.pubmed.rlalab.toml`, `admin_ingestion_defaults.toml`).
 
 ---
 
@@ -189,6 +212,12 @@ python scripts/create_user.py \
   --full-name "Jane Smith"
 ```
 
+Supported user roles are:
+
+- `researcher` — normal chat/search access.
+- `evaluator` — researcher access plus assigned evaluation review tasks at `/evaluation/reviews`.
+- `admin` — full admin access, including user management, ingestion, and evaluation management.
+
 ### 3. Frontend setup
 
 ```bash
@@ -228,7 +257,7 @@ API docs available at: `http://localhost:8000/api/docs`
 
 **Terminal 4 — dev on Docker and frontend on local** (if using Docker)
 ```bash
-docker compose up -d db backend ingestion-worker
+docker compose up -d db backend ingestion-worker evaluation-worker
 cd frontend
 npm run dev -- --hostname 0.0.0.0
 ```
@@ -238,9 +267,10 @@ Notes:
 - The first backend startup downloads the PubMedBERT checkpoint (~440 MB) into `backend/model_cache` unless it is already cached.
 - Backend startup currently preloads the embedding model. The verified local-compatible stack is `torch 2.2.x` plus `transformers 4.51.x`; if startup fails with a `torch.load` safety error, rerun `pip install -e ".[dev]" --upgrade` from `backend/`.
 - The frontend expects the backend at `http://localhost:8000` unless `NEXT_PUBLIC_API_URL` is overridden.
-- To watch the ingestion worker, run
+- To watch workers, run
 ```bash
 docker compose logs -f ingestion-worker
+docker compose logs -f evaluation-worker
 ```
 
 ## Tests
@@ -304,7 +334,7 @@ Notes:
 The IVFFlat index must be built after data exists. Run this once:
 
 ```bash
-psql $DATABASE_URL -c "
+psql postgresql://postgres:postgres@localhost:5433/rlalab_ai -c "
 CREATE INDEX ix_chunks_embedding ON document_chunks
 USING ivfflat (embedding vector_cosine_ops)
 WITH (lists = 100);
@@ -328,6 +358,29 @@ python ../evaluation/run_eval.py --mode rag --api-url http://localhost:8000 --to
 
 RAG evaluation now consumes the streaming chat endpoint directly and writes full responses, sources, and latencies to `evaluation/reports/`.
 
+Admins can manage the DB-backed evaluation workflow at `/admin/evaluation`.
+The evaluation UI supports:
+
+- creating question sets and individual benchmark questions;
+- importing/exporting benchmark JSONL files such as `evaluation/benchmark/questions.jsonl`;
+- creating queued run records and starting in-app background execution;
+- importing JSON reports produced by `evaluation/run_eval.py`;
+- inspecting run summaries and per-question retrieval/RAG results;
+- assigning results to expert reviewers and recording 1-5 answer quality scores;
+- comparing candidate runs against a baseline run;
+- checking the default release gate for completed runs.
+
+The CLI runner remains useful for local development and CI, while the admin UI
+supports benchmark curation, execution, expert review, comparison, and release
+decisions in the application.
+
+Evaluation documentation is split for two audiences:
+
+- `docs/evaluation-rationale-for-biologists.md` explains why the benchmark matters
+  and how domain experts should interpret results.
+- `docs/evaluation-metrics-and-benchmarking.md` defines retrieval/RAG metrics,
+  expert scoring, comparison, and release-gate logic.
+
 ---
 
 ## Production Deployment
@@ -344,7 +397,7 @@ docker-compose -f docker-compose.prod.yml up -d
 docker-compose -f docker-compose.prod.yml logs -f backend
 ```
 
-Production compose includes: PostgreSQL, FastAPI backend (2 workers), Next.js frontend, nginx reverse proxy.
+Production compose includes: PostgreSQL, FastAPI backend (2 web workers), ingestion worker, evaluation worker, Next.js frontend, nginx reverse proxy.
 
 You must supply `nginx/nginx.conf` and SSL certificates at `nginx/ssl/` before using the production compose.
 

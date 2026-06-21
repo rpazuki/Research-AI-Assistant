@@ -153,6 +153,9 @@ export default function AdminStatsClient() {
             <Link href="/admin/ingestion" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
               Ingestion
             </Link>
+            <Link href="/admin/evaluation" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
+              Evaluation
+            </Link>
             <Link href="/chat" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
               Chat
             </Link>

@@ -4,6 +4,24 @@ import type {
   ChatSession,
   ChatSessionWithMessages,
   ChatQuota,
+  EvaluationComparison,
+  EvaluationQuestion,
+  EvaluationQuestionCreate,
+  EvaluationQuestionImportResponse,
+  EvaluationQuestionSet,
+  EvaluationQuestionSetStatus,
+  EvaluationReportImportResponse,
+  EvaluationReleaseGate,
+  EvaluationReview,
+  EvaluationReviewAssignment,
+  EvaluationReviewPayload,
+  EvaluationReviewTask,
+  EvaluationRun,
+  EvaluationRunCreate,
+  EvaluationRunMode,
+  EvaluationRunResult,
+  EvaluationRunStatus,
+  EvaluationWorkerStatus,
   IngestionAcquisitionQueueReport,
   IngestionDocumentErrorReport,
   IngestionConfigContent,
@@ -239,6 +257,246 @@ export async function createIngestionJob(payload: IngestionJobCreate) {
 export async function cancelIngestionJob(jobId: string) {
   return apiFetch<IngestionJob>(`/admin/ingestion/jobs/${jobId}/cancel`, {
     method: "POST",
+  });
+}
+
+// ── Admin evaluation ─────────────────────────────────────────────────────────
+
+export async function listEvaluationQuestionSets() {
+  return apiFetch<EvaluationQuestionSet[]>("/admin/evaluation/question-sets");
+}
+
+export async function createEvaluationQuestionSet(
+  name: string,
+  description?: string | null,
+  status: EvaluationQuestionSetStatus = "draft"
+) {
+  return apiFetch<EvaluationQuestionSet>("/admin/evaluation/question-sets", {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      description: description || null,
+      status,
+    }),
+  });
+}
+
+export async function listEvaluationQuestions(questionSetId: string) {
+  return apiFetch<EvaluationQuestion[]>(
+    `/admin/evaluation/question-sets/${questionSetId}/questions`
+  );
+}
+
+export async function createEvaluationQuestion(questionSetId: string, payload: EvaluationQuestionCreate) {
+  return apiFetch<EvaluationQuestion>(
+    `/admin/evaluation/question-sets/${questionSetId}/questions`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function importEvaluationQuestions(
+  questionSetId: string,
+  questions: EvaluationQuestionCreate[],
+  upsert = true
+) {
+  return apiFetch<EvaluationQuestionImportResponse>(
+    `/admin/evaluation/question-sets/${questionSetId}/import?upsert=${upsert ? "true" : "false"}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ questions }),
+    }
+  );
+}
+
+export async function downloadEvaluationQuestionSet(questionSetId: string) {
+  const res = await fetch(`${API_PREFIX}/admin/evaluation/question-sets/${questionSetId}/export`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.detail ?? `API error ${res.status}`);
+  }
+  return {
+    text: await res.text(),
+    filename: filenameFromDisposition(
+      res.headers.get("content-disposition"),
+      "evaluation_questions.jsonl"
+    ),
+  };
+}
+
+export async function listEvaluationRuns(filters: {
+  status?: EvaluationRunStatus | "";
+  mode?: EvaluationRunMode | "";
+  questionSetId?: string;
+} = {}) {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.mode) params.set("mode", filters.mode);
+  if (filters.questionSetId) params.set("question_set_id", filters.questionSetId);
+  const query = params.toString();
+  return apiFetch<EvaluationRun[]>(`/admin/evaluation/runs${query ? `?${query}` : ""}`);
+}
+
+export async function createEvaluationRun(payload: EvaluationRunCreate) {
+  return apiFetch<EvaluationRun>("/admin/evaluation/runs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function executeEvaluationRun(runId: string) {
+  return apiFetch<EvaluationRun>(`/admin/evaluation/runs/${runId}/execute`, {
+    method: "POST",
+  });
+}
+
+export async function cancelEvaluationRun(runId: string) {
+  return apiFetch<EvaluationRun>(`/admin/evaluation/runs/${runId}/cancel`, {
+    method: "POST",
+  });
+}
+
+export async function getEvaluationRun(runId: string) {
+  return apiFetch<EvaluationRun>(`/admin/evaluation/runs/${runId}`);
+}
+
+export async function listEvaluationRunResults(runId: string) {
+  return apiFetch<EvaluationRunResult[]>(`/admin/evaluation/runs/${runId}/results`);
+}
+
+export async function getEvaluationWorkerStatus() {
+  return apiFetch<EvaluationWorkerStatus>("/admin/evaluation/worker");
+}
+
+export async function getEvaluationReleaseGate(runId: string) {
+  return apiFetch<EvaluationReleaseGate>(`/admin/evaluation/runs/${runId}/release-gate`);
+}
+
+export async function setEvaluationReleaseDecision(
+  runId: string,
+  payload: { status: "approved" | "waived" | "rejected"; note?: string | null }
+) {
+  return apiFetch<EvaluationRun>(`/admin/evaluation/runs/${runId}/release-decision`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listAdminEvaluationReviewTasks(runId: string) {
+  return apiFetch<EvaluationReviewTask[]>(`/admin/evaluation/runs/${runId}/review-tasks`);
+}
+
+export async function downloadEvaluationRunReviews(runId: string, format: "csv" | "json") {
+  const res = await fetch(
+    `${API_PREFIX}/admin/evaluation/runs/${runId}/reviews/export?format=${format}`
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.detail ?? `API error ${res.status}`);
+  }
+  return {
+    text: await res.text(),
+    filename: filenameFromDisposition(res.headers.get("content-disposition"), `reviews.${format}`),
+  };
+}
+
+export async function createEvaluationReviewAssignment(payload: {
+  run_result_id: string;
+  assigned_to_user_id: string;
+  due_at?: string | null;
+  notes?: string | null;
+}) {
+  return apiFetch<EvaluationReviewAssignment>(
+    `/admin/evaluation/results/${payload.run_result_id}/assignments`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        assigned_to_user_id: payload.assigned_to_user_id,
+        due_at: payload.due_at ?? null,
+        notes: payload.notes ?? null,
+      }),
+    }
+  );
+}
+
+export async function listEvaluationReviewAssignments(filters: {
+  runId?: string;
+  assignedToUserId?: string;
+  status?: string;
+} = {}) {
+  const params = new URLSearchParams();
+  if (filters.runId) params.set("run_id", filters.runId);
+  if (filters.assignedToUserId) params.set("assigned_to_user_id", filters.assignedToUserId);
+  if (filters.status) params.set("status", filters.status);
+  const query = params.toString();
+  return apiFetch<EvaluationReviewAssignment[]>(
+    `/admin/evaluation/assignments${query ? `?${query}` : ""}`
+  );
+}
+
+export async function saveEvaluationReview(
+  assignmentId: string,
+  payload: EvaluationReviewPayload,
+  submit = false
+) {
+  return apiFetch<EvaluationReview>(
+    `/admin/evaluation/assignments/${assignmentId}/review?submit=${submit ? "true" : "false"}`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function compareEvaluationRuns(baselineRunId: string, candidateRunId: string) {
+  return apiFetch<EvaluationComparison>("/admin/evaluation/compare", {
+    method: "POST",
+    body: JSON.stringify({
+      baseline_run_id: baselineRunId,
+      candidate_run_id: candidateRunId,
+    }),
+  });
+}
+
+export async function importEvaluationReport(payload: {
+  report: Record<string, unknown>;
+  name?: string | null;
+  question_set_id?: string | null;
+  artifact_paths?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}) {
+  return apiFetch<EvaluationReportImportResponse>("/admin/evaluation/runs/import-report", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ── Researcher evaluation reviews ────────────────────────────────────────────
+
+export async function listMyEvaluationReviewTasks(status?: string) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  const query = params.toString();
+  return apiFetch<EvaluationReviewTask[]>(`/evaluation/reviews${query ? `?${query}` : ""}`);
+}
+
+export async function getMyEvaluationReviewTask(assignmentId: string) {
+  return apiFetch<EvaluationReviewTask>(`/evaluation/reviews/${assignmentId}`);
+}
+
+export async function saveMyEvaluationReview(assignmentId: string, payload: EvaluationReviewPayload) {
+  return apiFetch<EvaluationReview>(`/evaluation/reviews/${assignmentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function submitMyEvaluationReview(assignmentId: string, payload: EvaluationReviewPayload) {
+  return apiFetch<EvaluationReview>(`/evaluation/reviews/${assignmentId}/submit`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 
