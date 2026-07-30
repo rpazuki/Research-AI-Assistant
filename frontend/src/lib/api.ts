@@ -4,6 +4,17 @@ import type {
   ChatSession,
   ChatSessionWithMessages,
   ChatQuota,
+  DatasheetExtractionSchema,
+  DatasheetTemplateCreate,
+  DatasheetTemplateDetail,
+  DatasheetTemplateSummary,
+  DatasheetCandidate,
+  DatasheetRunCreate,
+  DatasheetRunDetail,
+  DatasheetRunSummary,
+  DatasheetTemplateUpdate,
+  OrganismLookup,
+  ProductLookup,
   EvaluationComparison,
   EvaluationQuestion,
   EvaluationQuestionCreate,
@@ -668,4 +679,148 @@ export async function submitFeedback(
     method: "POST",
     body: JSON.stringify({ message_id: messageId, rating, comment }),
   });
+}
+
+// ── Datasheet templates ───────────────────────────────────────────────────────
+
+export async function listDatasheetTemplates() {
+  return apiFetch<DatasheetTemplateSummary[]>("/admin/datasheets/templates");
+}
+
+export async function getDatasheetTemplate(templateName: string) {
+  return apiFetch<DatasheetTemplateDetail>(
+    `/admin/datasheets/templates/${encodeURIComponent(templateName)}`
+  );
+}
+
+export async function createDatasheetTemplate(payload: DatasheetTemplateCreate) {
+  return apiFetch<DatasheetTemplateDetail>("/admin/datasheets/templates", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateDatasheetTemplate(
+  templateName: string,
+  payload: DatasheetTemplateUpdate
+) {
+  return apiFetch<DatasheetTemplateDetail>(
+    `/admin/datasheets/templates/${encodeURIComponent(templateName)}`,
+    { method: "PUT", body: JSON.stringify(payload) }
+  );
+}
+
+export async function seedDefaultDatasheetTemplate() {
+  return apiFetch<DatasheetTemplateDetail>(
+    "/admin/datasheets/templates/seed-default",
+    { method: "POST" }
+  );
+}
+
+export async function getDatasheetExtractionSchema(templateName: string) {
+  return apiFetch<DatasheetExtractionSchema>(
+    `/admin/datasheets/templates/${encodeURIComponent(templateName)}/extraction-schema`
+  );
+}
+
+// ── Datasheet seed lookup ─────────────────────────────────────────────────────
+
+export async function lookupOrganism(params: {
+  q?: string;
+  taxid?: number;
+  limit?: number;
+  resolve?: boolean;
+}) {
+  const query = new URLSearchParams();
+  if (params.q) query.set("q", params.q);
+  if (params.taxid !== undefined) query.set("taxid", String(params.taxid));
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  if (params.resolve) query.set("resolve", "true");
+  return apiFetch<OrganismLookup>(`/admin/datasheets/lookup/organism?${query.toString()}`);
+}
+
+export async function lookupProduct(params: {
+  q?: string;
+  cid?: number;
+  limit?: number;
+  resolve?: boolean;
+}) {
+  const query = new URLSearchParams();
+  if (params.q) query.set("q", params.q);
+  if (params.cid !== undefined) query.set("cid", String(params.cid));
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  if (params.resolve) query.set("resolve", "true");
+  return apiFetch<ProductLookup>(`/admin/datasheets/lookup/product?${query.toString()}`);
+}
+
+// ── Datasheet runs ────────────────────────────────────────────────────────────
+
+export async function listDatasheetRuns() {
+  return apiFetch<DatasheetRunSummary[]>("/admin/datasheets/runs");
+}
+
+export async function getDatasheetRun(runId: string) {
+  return apiFetch<DatasheetRunDetail>(`/admin/datasheets/runs/${encodeURIComponent(runId)}`);
+}
+
+export async function createDatasheetRun(payload: DatasheetRunCreate) {
+  return apiFetch<DatasheetRunDetail>("/admin/datasheets/runs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function cancelDatasheetRun(runId: string) {
+  return apiFetch<DatasheetRunDetail>(
+    `/admin/datasheets/runs/${encodeURIComponent(runId)}/cancel`,
+    { method: "POST" }
+  );
+}
+
+export async function listDatasheetRunCandidates(
+  runId: string,
+  params: { relevance?: string; acquisition_status?: string; limit?: number; offset?: number } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.relevance) query.set("relevance", params.relevance);
+  if (params.acquisition_status) query.set("acquisition_status", params.acquisition_status);
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  if (params.offset !== undefined) query.set("offset", String(params.offset));
+  return apiFetch<DatasheetCandidate[]>(
+    `/admin/datasheets/runs/${encodeURIComponent(runId)}/candidates?${query.toString()}`
+  );
+}
+
+export async function downloadDatasheetAssistedLinks(runId: string) {
+  const res = await fetch(
+    `${API_PREFIX}/admin/datasheets/runs/${encodeURIComponent(runId)}/acquisition-links.csv`
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.detail ?? `API error ${res.status}`);
+  }
+  return {
+    blob: await res.blob(),
+    filename: filenameFromDisposition(
+      res.headers.get("content-disposition"),
+      "assisted-acquisition.csv"
+    ),
+  };
+}
+
+export async function downloadDatasheetRunManifest(runId: string) {
+  const res = await fetch(
+    `${API_PREFIX}/admin/datasheets/runs/${encodeURIComponent(runId)}/manifest.csv`
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.detail ?? `API error ${res.status}`);
+  }
+  return {
+    blob: await res.blob(),
+    filename: filenameFromDisposition(
+      res.headers.get("content-disposition"),
+      "discovery-manifest.csv"
+    ),
+  };
 }

@@ -39,6 +39,9 @@ class RetrievedChunk:
     content: str
     score: float
     chunk_type: str
+    # Sidecar fields (datasheet round 1). Defaults keep older constructors valid.
+    section_label: str | None = None
+    is_review: bool = False
     metadata: dict = field(default_factory=dict)
 
 
@@ -61,7 +64,9 @@ async def retrieve(
         vector_top_k: Override for RETRIEVAL_VECTOR_TOP_K.
         lexical_top_k: Override for RETRIEVAL_LEXICAL_TOP_K.
         final_top_k: Override for RETRIEVAL_FINAL_TOP_K.
-        filters: Optional dict with keys year_from, year_to, source.
+        filters: Optional dict with keys year_from, year_to, source, taxid,
+            product_class, doc_type, section_label, exclude_reviews. Retracted and
+            non-chat-visible documents are always excluded, regardless of filters.
 
     Returns:
         List of RetrievedChunk ordered by RRF score, descending.
@@ -105,6 +110,7 @@ async def _vector_search(
             DocumentChunk.content,
             DocumentChunk.chunk_type,
             DocumentChunk.embedding_model,
+            DocumentChunk.section_label,
             Document.document_id,
             Document.pmid,
             Document.doi,
@@ -112,6 +118,7 @@ async def _vector_search(
             Document.journal,
             Document.year,
             Document.url,
+            Document.is_review,
             score_expr,
         )
         .join(Document, DocumentChunk.document_id == Document.id)
@@ -120,6 +127,7 @@ async def _vector_search(
         .limit(top_k)
     )
 
+    q = _apply_corpus_visibility(q)
     q = _apply_filters(q, filters)
     result = await db.execute(q)
     rows = result.all()
@@ -137,6 +145,8 @@ async def _vector_search(
             content=r.content,
             score=float(r.score),
             chunk_type=r.chunk_type,
+            section_label=r.section_label,
+            is_review=bool(r.is_review),
         )
         for r in rows
     ]
@@ -158,6 +168,7 @@ async def _lexical_search(
             DocumentChunk.id,
             DocumentChunk.content,
             DocumentChunk.chunk_type,
+            DocumentChunk.section_label,
             Document.document_id,
             Document.pmid,
             Document.doi,
@@ -165,6 +176,7 @@ async def _lexical_search(
             Document.journal,
             Document.year,
             Document.url,
+            Document.is_review,
             score_expr,
         )
         .join(Document, DocumentChunk.document_id == Document.id)
@@ -173,6 +185,7 @@ async def _lexical_search(
         .limit(top_k)
     )
 
+    q = _apply_corpus_visibility(q)
     q = _apply_filters(q, filters)
     result = await db.execute(q, {"query": query})
     rows = result.all()
@@ -190,9 +203,29 @@ async def _lexical_search(
             content=r.content,
             score=float(r.score),
             chunk_type=r.chunk_type,
+            section_label=r.section_label,
+            is_review=bool(r.is_review),
         )
         for r in rows
     ]
+
+
+def _apply_corpus_visibility(query):
+    """Restrict a query to documents chat is allowed to cite.
+
+    Applied unconditionally by both search paths, and deliberately kept out of
+    `_apply_filters` so that "no filters" still means "no caller-supplied filters".
+
+    Two exclusions:
+      - retracted work — citing a retracted yield is the worst failure this system
+        has (docs/INGESTION_PLAN.md §5);
+      - `chat_visible = false` — documents acquired by an off-domain datasheet run
+        stay out of chat retrieval until an admin promotes them.
+    """
+    return query.where(
+        Document.is_retracted.is_(False),
+        Document.chat_visible.is_(True),
+    )
 
 
 def _apply_filters(query, filters: dict | None):
@@ -205,6 +238,18 @@ def _apply_filters(query, filters: dict | None):
         query = query.where(Document.year <= year_to)
     if source := filters.get("source"):
         query = query.where(Document.source == source)
+    if taxid := filters.get("taxid"):
+        query = query.where(Document.taxids.any(int(taxid)))
+    if product_class := filters.get("product_class"):
+        query = query.where(Document.product_classes.any(product_class))
+    if doc_type := filters.get("doc_type"):
+        query = query.where(Document.doc_type == doc_type)
+    if section_label := filters.get("section_label"):
+        query = query.where(DocumentChunk.section_label == section_label)
+    # Explicit `is True` rather than truthiness: an absent key and an explicit
+    # False must behave identically (no clause), and only True excludes reviews.
+    if filters.get("exclude_reviews") is True:
+        query = query.where(Document.is_review.is_(False))
     return query
 
 

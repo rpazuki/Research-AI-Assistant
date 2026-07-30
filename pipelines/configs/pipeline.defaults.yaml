@@ -1,6 +1,11 @@
 defaults:
   runtime:
-    database_url: "postgresql+asyncpg://postgres:postgres@localhost:5432/rlalab_ai"
+    # Local scenario (host process -> Compose db on its published port).
+    # Must match Settings.database_url's default in backend/app/core/config.py —
+    # test_pipeline_config.py asserts they agree.
+    # compose/server receive DATABASE_URL from .env.compose / .env.server, which
+    # apply_pipeline_env_overrides() prefers over this value.
+    database_url: "postgresql+asyncpg://postgres:postgres@localhost:5433/rlalab_ai"
     progress_interval_documents: 100
 
   cache:
@@ -68,15 +73,14 @@ defaults:
       - "author-provided"
       - "manual-upload"
 
+# Selected by RLALAB_ENV = local | compose | server (see run_and_deploy.md §2).
+# Addresses are deliberately absent here: `local` uses the defaults above, and
+# compose/server get DATABASE_URL injected from .env.compose / .env.server.
 environments:
-  development:
-    runtime:
-      database_url: "postgresql+asyncpg://postgres:postgres@localhost:5432/rlalab_ai"
+  local: {}
 
-  production:
-    runtime:
-      progress_interval_documents: 250
+  compose: {}
 
-  deployed:
+  server:
     runtime:
       progress_interval_documents: 250

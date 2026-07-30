@@ -1,5 +1,14 @@
+# Frontend runtime configuration.
+#
+# Selected by RLALAB_ENV = local | compose | server (see run_and_deploy.md §2).
+# `defaults` serve the `local` scenario; Compose sets RLALAB_ENV explicitly.
+#
+# This file is the single owner of "where is the backend, as seen by the frontend".
+# Do NOT also set NEXT_PUBLIC_API_URL in .env — that would override this file and
+# put a container hostname into host shells.
+
 defaults:
-  app_environment: "development"
+  app_environment: "local"
   backend_api_url: "http://localhost:8000"
   backend_api_version_path: "/api/v1"
   api_proxy_prefix: "/api/backend"
@@ -14,17 +23,20 @@ defaults:
   next_output: "standalone"
 
 environments:
-  development:
-    app_environment: "development"
+  # Host processes (npm run dev). Backend reached on its published port.
+  local:
+    app_environment: "local"
     backend_api_url: "http://localhost:8000"
     auth_cookie_secure: false
 
-  production:
-    app_environment: "production"
+  # Containers on a dev machine. Backend reached by Compose service name.
+  compose:
+    app_environment: "compose"
     backend_api_url: "http://backend:8000"
-    auth_cookie_secure: true
+    auth_cookie_secure: false
 
-  deployed:
-    app_environment: "production"
+  # Containers on the deployment VM, behind nginx with TLS.
+  server:
+    app_environment: "server"
     backend_api_url: "http://backend:8000"
     auth_cookie_secure: true

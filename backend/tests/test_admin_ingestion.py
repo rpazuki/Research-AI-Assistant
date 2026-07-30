@@ -12,12 +12,14 @@ from fastapi import HTTPException
 from app.api import deps
 from app.db.models import User
 from app.ingestion.admin_service import (
+    ALLOWED_CACHE_ROOT,
     APPROVED_CONFIG_DIR,
     get_worker_status,
     get_approved_config,
     list_approved_configs,
     load_ingestion_defaults,
-    validate_cache_path,
+    resolve_cache_path,
+    store_cache_path,
     write_worker_heartbeat,
 )
 from app.ingestion.worker import (
@@ -209,7 +211,8 @@ async def test_admin_stats_document_errors_endpoint_reads_cache_errors(
 
     assert response.status_code == 200
     body = response.json()
-    assert body[0]["cache_path"] == str(cache_root)
+    assert body[0]["cache_path"] == "data/corpora/rlalab-pubmed-v1/run-1"
+    assert body[0]["error_file_path"] == str(error_file)
     assert body[0]["exists"] is True
     assert body[0]["record_count"] == 1
     assert body[0]["records"][0]["error"] == "No text extracted"
@@ -238,7 +241,8 @@ async def test_admin_ingestion_acquisition_queue_endpoint_reads_cache_queue(
 
     assert response.status_code == 200
     body = response.json()
-    assert body[0]["cache_path"] == str(cache_root)
+    assert body[0]["cache_path"] == "data/corpora/rlalab-pubmed-v1/run-1"
+    assert body[0]["queue_file_path"] == str(queue_file)
     assert body[0]["exists"] is True
     assert body[0]["record_count"] == 1
     assert body[0]["records"][0]["candidate_url"] == "https://example.org/article"
@@ -307,13 +311,54 @@ def test_rejects_unapproved_ingestion_config_path() -> None:
 
 
 def test_restricts_cache_paths_to_corpus_data() -> None:
-    resolved = validate_cache_path("data/corpora/rlalab-pubmed-v1/cumulative")
+    resolved = resolve_cache_path("data/corpora/rlalab-pubmed-v1/cumulative")
 
     assert resolved is not None
-    assert resolved.endswith("data/corpora/rlalab-pubmed-v1/cumulative")
+    assert str(resolved).endswith("data/corpora/rlalab-pubmed-v1/cumulative")
+    assert resolved.is_absolute()
 
     with pytest.raises(HTTPException):
-        validate_cache_path("/tmp/not-an-approved-cache")
+        resolve_cache_path("/tmp/not-an-approved-cache")
+
+
+def test_accepts_a_cache_path_recorded_by_another_topology() -> None:
+    """The split-brain case: a containerised worker records `/app/data/corpora/...`
+    and a host backend, whose repo root is the checkout, must still read it."""
+    resolved = resolve_cache_path("/app/data/corpora/rlalab-pubmed-v1/cumulative")
+
+    assert resolved == ALLOWED_CACHE_ROOT.resolve() / "rlalab-pubmed-v1" / "cumulative"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "data/corpora/rlalab-pubmed-v1/cumulative",
+        "/app/data/corpora/rlalab-pubmed-v1/cumulative",
+        str(ALLOWED_CACHE_ROOT / "rlalab-pubmed-v1" / "cumulative"),
+    ],
+)
+def test_stored_cache_paths_are_repo_relative_whatever_the_input(value: str) -> None:
+    """One canonical string per cache, so two processes cannot disagree."""
+    assert store_cache_path(value) == "data/corpora/rlalab-pubmed-v1/cumulative"
+
+
+def test_stores_the_cache_root_itself_without_a_trailing_segment() -> None:
+    assert store_cache_path("/app/data/corpora") == "data/corpora"
+
+
+def test_a_traversal_tail_is_rejected_rather_than_re_rooted() -> None:
+    """Re-rooting must not become a way out of the cache root."""
+    with pytest.raises(HTTPException):
+        resolve_cache_path("data/corpora/../../etc/passwd")
+
+    with pytest.raises(HTTPException):
+        resolve_cache_path("/app/data/corpora/../../../etc/passwd")
+
+
+def test_empty_cache_paths_stay_empty() -> None:
+    assert resolve_cache_path(None) is None
+    assert resolve_cache_path("") is None
+    assert store_cache_path(None) is None
 
 
 def test_dump_toml_sections_preserves_known_config_shape() -> None:
@@ -413,7 +458,7 @@ async def test_worker_run_job_marks_success(
     assert job.manifest_id == manifest_id
     assert job.document_count == 100
     assert job.chunk_count == 150
-    assert job.cache_path == "/app/data/corpora/test/run"
+    assert job.cache_path == "data/corpora/test/run"
     assert job.finished_at is not None
 
 

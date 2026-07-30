@@ -42,13 +42,18 @@ function deepMerge(base: RawConfig, override: RawConfig): RawConfig {
   return merged;
 }
 
+/**
+ * The one scenario selector: local | compose | server.
+ *
+ * Shared with the backend, pipelines and evaluation components so a single value
+ * describes the whole system. Defaults to `local`, because Compose always sets it
+ * explicitly and a bare `npm run dev` shell cannot.
+ *
+ * Deliberately does NOT fall back to NODE_ENV: `next build` sets NODE_ENV=production,
+ * which would silently select the server scenario when building a local image.
+ */
 function envName() {
-  return (
-    process.env.FRONTEND_ENV ||
-    process.env.APP_ENV ||
-    process.env.NODE_ENV ||
-    "development"
-  );
+  return process.env.RLALAB_ENV || "local";
 }
 
 function configPath() {

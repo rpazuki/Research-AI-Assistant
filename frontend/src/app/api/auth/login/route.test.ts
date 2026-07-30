@@ -8,7 +8,7 @@ describe("login route config integration", () => {
   });
 
   it("posts to the configured deployed backend and sets configured secure cookie", async () => {
-    vi.stubEnv("FRONTEND_ENV", "production");
+    vi.stubEnv("RLALAB_ENV", "server");
     vi.stubEnv("NEXT_PUBLIC_API_URL", "https://backend.example");
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

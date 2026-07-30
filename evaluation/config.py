@@ -51,12 +51,13 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def _config_environment() -> str:
-    return (
-        os.environ.get("EVALUATION_ENV")
-        or os.environ.get("APP_ENV")
-        or os.environ.get("ENVIRONMENT")
-        or "development"
-    )
+    """The one scenario selector: local | compose | server.
+
+    Shared with the backend, frontend and evaluation components so a single value
+    describes the whole system. Defaults to `local`, because Compose always sets it
+    explicitly and a bare shell cannot.
+    """
+    return os.environ.get("RLALAB_ENV") or "local"
 
 
 def _config_file_path() -> Path:

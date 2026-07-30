@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { getAdminStats, getIngestionDocumentErrors, logout } from "@/lib/api";
+import { getAdminStats, getIngestionDocumentErrors } from "@/lib/api";
 import type { AdminStats, AdminStatsRecentJob, IngestionDocumentErrorReport } from "@/types";
+import AdminHeader from "./AdminHeader";
 import { formatBytes, formatCount, formatLastActive, formatLatency } from "./usage";
 
 function formatPercent(value: number, total: number) {
@@ -124,12 +125,6 @@ export default function AdminStatsClient() {
     }
   }
 
-  async function handleLogout() {
-    await logout();
-    router.push("/login");
-    router.refresh();
-  }
-
   const overview = stats?.overview;
   const content = stats?.content;
   const totalDocuments = overview?.document_count ?? 0;
@@ -140,31 +135,7 @@ export default function AdminStatsClient() {
 
   return (
     <main className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">Admin</h1>
-            <p className="text-sm text-gray-500">Statistics</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link href="/admin" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Users
-            </Link>
-            <Link href="/admin/ingestion" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Ingestion
-            </Link>
-            <Link href="/admin/evaluation" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Evaluation
-            </Link>
-            <Link href="/chat" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Chat
-            </Link>
-            <button type="button" onClick={handleLogout} className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      <AdminHeader subtitle="Statistics" />
 
       <section className="mx-auto max-w-6xl px-6 py-6">
         {error && (

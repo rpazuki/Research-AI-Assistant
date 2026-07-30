@@ -22,11 +22,11 @@ services:
       dockerfile: backend/Dockerfile
     container_name: rlalab_backend
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - .env
+      - .env.server
     environment:
-      APP_ENV: ${APP_ENV}
-      DATABASE_URL: ${DATABASE_URL}
-      ALEMBIC_DATABASE_URL: ${DATABASE_URL}
+      RLALAB_ENV: server
     depends_on:
       db:
         condition: service_healthy
@@ -44,11 +44,11 @@ services:
       dockerfile: backend/Dockerfile
     container_name: rlalab_ingestion_worker
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - .env
+      - .env.server
     environment:
-      APP_ENV: ${APP_ENV}
-      DATABASE_URL: ${DATABASE_URL}
-      ALEMBIC_DATABASE_URL: ${DATABASE_URL}
+      RLALAB_ENV: server
     depends_on:
       db:
         condition: service_healthy
@@ -65,11 +65,11 @@ services:
       dockerfile: backend/Dockerfile
     container_name: rlalab_evaluation_worker
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - .env
+      - .env.server
     environment:
-      APP_ENV: ${APP_ENV}
-      DATABASE_URL: ${DATABASE_URL}
-      ALEMBIC_DATABASE_URL: ${DATABASE_URL}
+      RLALAB_ENV: server
     depends_on:
       db:
         condition: service_healthy
@@ -86,11 +86,13 @@ services:
       dockerfile: Dockerfile
     container_name: rlalab_frontend
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - .env
+      - .env.server
     environment:
-      FRONTEND_ENV: ${FRONTEND_ENV}
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-      NEXT_PUBLIC_API_PROXY_PREFIX: ${NEXT_PUBLIC_API_PROXY_PREFIX}
+      # The frontend derives the backend URL from frontend/configs/frontend.yaml
+      # keyed on this selector — no URL is passed in, so nothing can override it.
+      RLALAB_ENV: server
     expose:
       - "3000"
     depends_on:

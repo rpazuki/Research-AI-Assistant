@@ -14,18 +14,19 @@ Write those migrations manually using op.execute().
 """
 
 import asyncio
-import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from app.core.config import settings
 from app.db.models import Base
 
 config = context.config
-if os.environ.get("ALEMBIC_DATABASE_URL"):
-    config.set_main_option("sqlalchemy.url", os.environ["ALEMBIC_DATABASE_URL"])
+# One owner for the database address: Settings. `alembic_database_url` honours
+# ALEMBIC_DATABASE_URL first, then DATABASE_URL, then the local-scenario default.
+config.set_main_option("sqlalchemy.url", settings.alembic_database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

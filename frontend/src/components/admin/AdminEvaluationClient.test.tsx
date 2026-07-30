@@ -32,6 +32,7 @@ const setEvaluationReleaseDecision = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh }),
+  usePathname: () => "/admin/evaluation",
 }));
 
 vi.mock("@/lib/api", () => ({

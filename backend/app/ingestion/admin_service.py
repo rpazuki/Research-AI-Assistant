@@ -31,6 +31,13 @@ JOB_WORK_ROOT = APP_DATA_DIR / "ingestion_jobs"
 WORKER_HEARTBEAT_PATH = JOB_WORK_ROOT / "worker_heartbeat.json"
 ALLOWED_CACHE_ROOT = APP_DATA_DIR / "corpora"
 
+# Cache paths are *stored* in this repo-relative form and resolved against the
+# local ALLOWED_CACHE_ROOT on every read. An absolute path in the database means
+# "wherever the writing process's filesystem was", which breaks the moment a
+# containerised worker (repo root /app) and a host backend (repo root the
+# checkout) share one database. See run_and_deploy.md §7.
+CACHE_ROOT_RELATIVE = Path("data") / "corpora"
+
 SAFE_PATH_PART = re.compile(r"[^A-Za-z0-9._ -]+")
 SAFE_CONFIG_NAME = re.compile(r"^[A-Za-z0-9._ -]+\.toml$")
 SUPPORTED_SOURCES = {
@@ -378,7 +385,7 @@ def load_ingestion_defaults() -> dict[str, Any]:
 
     cache_path = str(defaults.get("cache_path") or "")
     if cache_path:
-        validate_cache_path(cache_path)
+        defaults["cache_path"] = store_cache_path(cache_path)
 
     return defaults
 
@@ -395,32 +402,72 @@ def get_approved_config(config_name: str) -> tuple[Path, dict[str, Any]]:
     return config_path, load_toml(config_path)
 
 
-def validate_cache_path(cache_path: str | None) -> str | None:
+def _cache_root_tail(path: Path) -> Path | None:
+    """Return the part of `path` that follows a `data/corpora` segment pair.
+
+    This is what makes a cache path portable: the tail is the only part that
+    identifies the cache, and it is the same string in every topology.
+    """
+    parts = path.parts
+    for index in range(len(parts) - 1):
+        if parts[index] == "data" and parts[index + 1] == "corpora":
+            return Path(*parts[index + 2 :])
+    return None
+
+
+def resolve_cache_path(cache_path: str | None) -> Path | None:
+    """Resolve a stored or user-supplied cache path to an absolute local path.
+
+    Accepts the stored form (`data/corpora/<name>`), an absolute path that is
+    already under this process's cache root, and a legacy absolute path recorded
+    by a process with a different repo root (`/app/data/corpora/<name>`). The
+    result is always verified to sit inside ALLOWED_CACHE_ROOT, so a traversal
+    tail such as `data/corpora/../../etc` is rejected rather than re-rooted.
+    """
     if not cache_path:
         return None
-    path = Path(cache_path).expanduser()
-    if not path.is_absolute():
-        path = _REPO_ROOT / path
-    resolved = path.resolve()
+
     allowed_root = ALLOWED_CACHE_ROOT.resolve()
-    if resolved != allowed_root and allowed_root not in resolved.parents:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cache path must live under data/corpora",
-        )
-    return str(resolved)
+    raw = Path(cache_path).expanduser()
+
+    if raw.is_absolute():
+        resolved = raw.resolve()
+        if resolved == allowed_root or allowed_root in resolved.parents:
+            return resolved
+
+    tail = _cache_root_tail(raw)
+    if tail is not None:
+        candidate = (allowed_root / tail).resolve()
+        if candidate == allowed_root or allowed_root in candidate.parents:
+            return candidate
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Cache path must live under data/corpora",
+    )
+
+
+def store_cache_path(cache_path: str | None) -> str | None:
+    """Normalise a cache path to the repo-relative form used for persistence."""
+    resolved = resolve_cache_path(cache_path)
+    if resolved is None:
+        return None
+    tail = resolved.relative_to(ALLOWED_CACHE_ROOT.resolve())
+    return CACHE_ROOT_RELATIVE.joinpath(tail).as_posix()
 
 
 def read_cache_document_error_reports(cache_paths: list[str]) -> list[dict[str, Any]]:
     reports: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw_cache_path in cache_paths:
-        cache_path = validate_cache_path(raw_cache_path)
+        cache_root = resolve_cache_path(raw_cache_path)
+        if cache_root is None:
+            continue
+        cache_path = store_cache_path(raw_cache_path)
         if cache_path is None or cache_path in seen:
             continue
         seen.add(cache_path)
 
-        cache_root = Path(cache_path)
         candidates = [
             cache_root / "normalized" / "documents.errors.jsonl",
             cache_root / "normalized" / "documents.error.jsonl",
@@ -457,12 +504,15 @@ def read_cache_acquisition_queue_reports(cache_paths: list[str]) -> list[dict[st
     reports: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw_cache_path in cache_paths:
-        cache_path = validate_cache_path(raw_cache_path)
+        cache_root = resolve_cache_path(raw_cache_path)
+        if cache_root is None:
+            continue
+        cache_path = store_cache_path(raw_cache_path)
         if cache_path is None or cache_path in seen:
             continue
         seen.add(cache_path)
 
-        queue_path = Path(cache_path) / "reports" / "acquisition_queue.jsonl"
+        queue_path = cache_root / "reports" / "acquisition_queue.jsonl"
         records: list[dict[str, Any]] = []
         parse_errors: list[str] = []
 
@@ -491,15 +541,15 @@ def read_cache_acquisition_queue_reports(cache_paths: list[str]) -> list[dict[st
 
 
 def export_cache_acquisition_review_csv(cache_path: str) -> tuple[bytes, int]:
-    validated_cache_path = validate_cache_path(cache_path)
-    if validated_cache_path is None:
+    resolved_cache_path = resolve_cache_path(cache_path)
+    if resolved_cache_path is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cache path is required")
 
     from pipelines.acquisition.fulltext import export_review_csv
     from pipelines.corpus_cache import CorpusCache
 
     try:
-        cache = CorpusCache.open(validated_cache_path)
+        cache = CorpusCache.open(str(resolved_cache_path))
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_path = Path(tmp_dir) / "review_queue.csv"
             count = export_review_csv(

@@ -1,15 +1,14 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
   downloadIngestionAcquisitionReviewCsv,
   getIngestionAcquisitionQueue,
-  logout,
 } from "@/lib/api";
 import type { IngestionAcquisitionQueueReport } from "@/types";
+import AdminHeader from "./AdminHeader";
 
 const PREFERRED_COLUMNS = [
   "doi",
@@ -152,11 +151,6 @@ export default function AdminAcquisitionQueueClient() {
     }
   }
 
-  async function handleLogout() {
-    await logout();
-    router.push("/login");
-  }
-
   async function handleCsvDownload() {
     if (!selectedReport) return;
     try {
@@ -190,28 +184,7 @@ export default function AdminAcquisitionQueueClient() {
 
   return (
     <main className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">Admin</h1>
-            <p className="text-sm text-gray-500">Acquisition queue</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link href="/admin/ingestion" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Ingestion
-            </Link>
-            <Link href="/admin/ingestion/config" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Config
-            </Link>
-            <Link href="/admin/stats" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Stats
-            </Link>
-            <button type="button" onClick={handleLogout} className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      <AdminHeader subtitle="Acquisition queue" />
 
       <section className="mx-auto grid max-w-6xl gap-6 px-6 py-6">
         {error && <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}

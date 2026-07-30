@@ -9,6 +9,7 @@ const push = vi.fn();
 const createSession = vi.fn();
 const getAdminUserSession = vi.fn();
 const getChatQuota = vi.fn();
+const getMe = vi.fn();
 const getSession = vi.fn();
 const listAdminUserSessions = vi.fn();
 const listMyEvaluationReviewTasks = vi.fn();
@@ -26,6 +27,7 @@ vi.mock("@/lib/api", () => ({
   createSession: (...args: unknown[]) => createSession(...args),
   getAdminUserSession: (...args: unknown[]) => getAdminUserSession(...args),
   getChatQuota: (...args: unknown[]) => getChatQuota(...args),
+  getMe: (...args: unknown[]) => getMe(...args),
   getSession: (...args: unknown[]) => getSession(...args),
   listAdminUserSessions: (...args: unknown[]) => listAdminUserSessions(...args),
   listMyEvaluationReviewTasks: (...args: unknown[]) => listMyEvaluationReviewTasks(...args),
@@ -42,6 +44,7 @@ describe("ChatClient", () => {
     createSession.mockReset();
     getAdminUserSession.mockReset();
     getChatQuota.mockReset();
+    getMe.mockReset();
     getSession.mockReset();
     listAdminUserSessions.mockReset();
     listMyEvaluationReviewTasks.mockReset();
@@ -78,6 +81,13 @@ describe("ChatClient", () => {
       message: null,
     });
     listMyEvaluationReviewTasks.mockResolvedValue([]);
+    getMe.mockResolvedValue({
+      id: "current-user",
+      email: "researcher@example.com",
+      full_name: "Researcher",
+      role: "researcher",
+      is_active: true,
+    });
     getSession.mockResolvedValue({
       id: "session-1",
       user_id: "current-user",
@@ -252,5 +262,38 @@ describe("ChatClient", () => {
     expect(updateSessionTitle).not.toHaveBeenCalled();
     expect(deleteSession).not.toHaveBeenCalled();
     expect(streamMessage).not.toHaveBeenCalled();
+    expect(getMe).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Admin" })).not.toBeInTheDocument();
+  });
+
+  it("offers an admin shortcut only to admins", async () => {
+    getMe.mockResolvedValue({
+      id: "current-user",
+      email: "admin@example.com",
+      full_name: "Admin",
+      role: "admin",
+      is_active: true,
+    });
+
+    render(<ChatClient />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Admin" }));
+    expect(push).toHaveBeenCalledWith("/admin");
+  });
+
+  it("hides the admin shortcut from researchers", async () => {
+    render(<ChatClient />);
+
+    await screen.findByRole("button", { name: "Initial title" });
+    expect(screen.queryByRole("button", { name: "Admin" })).not.toBeInTheDocument();
+  });
+
+  it("hides the admin shortcut when the role lookup fails", async () => {
+    getMe.mockRejectedValue(new Error("Unauthorized"));
+
+    render(<ChatClient />);
+
+    await screen.findByRole("button", { name: "Initial title" });
+    expect(screen.queryByRole("button", { name: "Admin" })).not.toBeInTheDocument();
   });
 });

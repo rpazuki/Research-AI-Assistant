@@ -1,5 +1,5 @@
 defaults:
-  evaluation_env: "development"
+  evaluation_env: "local"
   api_url: "http://localhost:8000"
   default_mode: "retrieval"
   question_id: null
@@ -15,15 +15,20 @@ defaults:
   mrr_at_k: 10
   session_mode: "researcher"
 
+# Selected by RLALAB_ENV. This file is the single owner of "which API does the
+# evaluation runner talk to".
 environments:
-  development:
-    evaluation_env: "development"
+  # Runner on the host, backend on its published port.
+  local:
+    evaluation_env: "local"
     api_url: "http://localhost:8000"
 
-  production:
-    evaluation_env: "production"
-    api_url: "https://assistant.rlalab.imperial.ac.uk"
+  # Runner inside Compose, backend by service name.
+  compose:
+    evaluation_env: "compose"
+    api_url: "http://backend:8000"
 
-  deployed:
-    evaluation_env: "production"
+  # Runner pointed at the deployed instance through nginx.
+  server:
+    evaluation_env: "server"
     api_url: "https://assistant.rlalab.imperial.ac.uk"

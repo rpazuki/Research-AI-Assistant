@@ -19,6 +19,7 @@ const uploadIngestionPdfFolder = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh }),
+  usePathname: () => "/admin/ingestion",
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -99,7 +100,7 @@ const finishedTestYearJob = {
   mode: "test_year",
   from_date: null,
   year: 2024,
-  cache_path: "/app/data/corpora/rlalab-pubmed-v1/test-2024",
+  cache_path: "data/corpora/rlalab-pubmed-v1/test-2024",
   options: { write_acquisition_queue: false, include_cached_fulltext: true },
   manifest_id: "manifest-2024",
   document_count: 42,
@@ -198,7 +199,7 @@ describe("AdminIngestionClient", () => {
     expect(screen.getAllByText("Config").length).toBeGreaterThan(0);
     expect(screen.getAllByText("pubmed_abstract.rlalab.toml").length).toBeGreaterThan(0);
     expect(screen.getByText("1h 2m 3s")).toBeInTheDocument();
-    expect(screen.getByText("/app/data/corpora/rlalab-pubmed-v1/test-2024")).toBeInTheDocument();
+    expect(screen.getByText("data/corpora/rlalab-pubmed-v1/test-2024")).toBeInTheDocument();
     expect(screen.getByText("manifest-2024")).toBeInTheDocument();
     expect(screen.getByText("include_cached_fulltext")).toBeInTheDocument();
     expect(screen.getByText(/Created ingestion manifest/)).toBeInTheDocument();
@@ -212,7 +213,7 @@ describe("AdminIngestionClient", () => {
       initialJobs: [
         {
           ...queuedJob,
-          cache_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative",
+          cache_path: "data/corpora/rlalab-pubmed-v1/cumulative",
         },
       ],
     });
@@ -228,7 +229,7 @@ describe("AdminIngestionClient", () => {
 
     expect(await screen.findByText("Requested range")).toBeInTheDocument();
     expect(screen.getAllByText("From 2026-05-01").length).toBeGreaterThan(0);
-    expect(screen.getByText("/app/data/corpora/rlalab-pubmed-v1/cumulative")).toBeInTheDocument();
+    expect(screen.getByText("data/corpora/rlalab-pubmed-v1/cumulative")).toBeInTheDocument();
   });
 
   it("warns when no ingestion worker heartbeat is visible", async () => {

@@ -12,6 +12,7 @@ const updateAdminUserTokenLimit = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
+  usePathname: () => "/admin/users/user-1",
 }));
 
 vi.mock("@/lib/api", () => ({

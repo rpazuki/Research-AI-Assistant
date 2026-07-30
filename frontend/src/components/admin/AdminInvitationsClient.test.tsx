@@ -11,6 +11,7 @@ const sendInvitations = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh }),
+  usePathname: () => "/admin/invitations",
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -54,10 +55,7 @@ describe("AdminInvitationsClient", () => {
       );
     });
     expect(screen.getByText("Sent invitation to new@lab.ac.uk")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Back to users" })).toHaveAttribute(
-      "href",
-      "/admin"
-    );
+    expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/admin");
   });
 
   it("redirects to login when invitation send is unauthorized", async () => {

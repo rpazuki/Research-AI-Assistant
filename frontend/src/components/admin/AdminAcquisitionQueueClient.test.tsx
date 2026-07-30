@@ -11,6 +11,7 @@ const logout = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
+  usePathname: () => "/admin/ingestion/acquisition",
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -44,7 +45,7 @@ describe("AdminAcquisitionQueueClient", () => {
   it("renders acquisition queue records with open and download links for URL fields", async () => {
     getIngestionAcquisitionQueue.mockResolvedValue([
       {
-        cache_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative",
+        cache_path: "data/corpora/rlalab-pubmed-v1/cumulative",
         queue_file_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative/reports/acquisition_queue.jsonl",
         exists: true,
         record_count: 1,
@@ -95,7 +96,7 @@ describe("AdminAcquisitionQueueClient", () => {
     fireEvent.click(screen.getByRole("button", { name: "To CSV" }));
     await waitFor(() => {
       expect(downloadIngestionAcquisitionReviewCsv).toHaveBeenCalledWith(
-        "/app/data/corpora/rlalab-pubmed-v1/cumulative"
+        "data/corpora/rlalab-pubmed-v1/cumulative"
       );
     });
   });

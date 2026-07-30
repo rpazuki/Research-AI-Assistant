@@ -585,3 +585,211 @@ export interface CorpusStats {
   last_ingestion: string | null;
   last_corpus_name: string | null;
 }
+
+// Datasheet templates (datasheet feature, round 1)
+export type DatasheetColumnKind =
+  | "bibliographic"
+  | "free_text"
+  | "controlled"
+  | "numeric";
+
+export type DatasheetSourceHint = "metadata" | "abstract" | "fulltext" | "any";
+
+export interface DatasheetTemplateColumnPayload {
+  key: string;
+  label: string;
+  kind: DatasheetColumnKind;
+  order_index: number;
+  vocabulary: string[];
+  extraction_hint: string | null;
+  source_hint: DatasheetSourceHint;
+  required: boolean;
+  enabled: boolean;
+}
+
+export interface DatasheetTemplateColumn extends DatasheetTemplateColumnPayload {
+  id: string;
+}
+
+export interface DatasheetTemplateSummary {
+  id: string;
+  name: string;
+  version: number;
+  description: string | null;
+  is_default: boolean;
+  column_count: number;
+  enabled_column_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DatasheetTemplateDetail extends DatasheetTemplateSummary {
+  columns: DatasheetTemplateColumn[];
+}
+
+export interface DatasheetTemplateCreate {
+  name: string;
+  description?: string | null;
+  is_default?: boolean;
+  columns: DatasheetTemplateColumnPayload[];
+}
+
+export interface DatasheetTemplateUpdate {
+  description?: string | null;
+  is_default?: boolean;
+  columns?: DatasheetTemplateColumnPayload[];
+}
+
+export interface DatasheetExtractionSchema {
+  template_name: string;
+  template_version: number;
+  enabled_columns: string[];
+  json_schema: Record<string, unknown>;
+}
+
+// Seed lookup (datasheet feature, S1)
+export interface OrganismSuggestion {
+  taxid: number;
+  scientific_name: string;
+  rank: string | null;
+  common_name: string | null;
+}
+
+export interface OrganismSeed {
+  taxid: number;
+  scientific_name: string;
+  rank: string | null;
+  synonyms: string[];
+  common_names: string[];
+  lineage: string[];
+  search_terms: string[];
+}
+
+export interface OrganismLookup {
+  query: string;
+  suggestions: OrganismSuggestion[];
+  seed: OrganismSeed | null;
+}
+
+export interface ProductSuggestion {
+  name: string;
+  cid: number | null;
+}
+
+export interface ProductSeed {
+  cid: number;
+  preferred_name: string;
+  synonyms: string[];
+  chebi_id: string | null;
+  inchikey: string | null;
+  molecular_formula: string | null;
+  molecular_weight: string | null;
+  iupac_name: string | null;
+  chebi_label: string | null;
+  chebi_definition: string | null;
+  product_class: string | null;
+  product_class_evidence: string | null;
+  search_terms: string[];
+}
+
+export interface ProductLookup {
+  query: string;
+  suggestions: ProductSuggestion[];
+  seed: ProductSeed | null;
+  product_classes: string[];
+}
+
+// Datasheet runs and candidates (datasheet feature, S2)
+export type DatasheetSeedKind = "organism" | "bioproduct" | "organism_and_product";
+
+export interface DatasheetRunCreate {
+  name: string;
+  seed_kind: DatasheetSeedKind;
+  organism_name?: string | null;
+  organism_taxid?: number | null;
+  organism_synonyms: string[];
+  product_term?: string | null;
+  product_ids?: Record<string, unknown> | null;
+  product_synonyms: string[];
+  product_classes?: string[] | null;
+  year_from?: number | null;
+  year_to?: number | null;
+  template_name?: string;
+  sources?: string[];
+  max_records_per_source?: number;
+  include_mentions?: boolean;
+  include_reviews?: boolean;
+  check_retraction_notices?: boolean;
+}
+
+export interface DatasheetRunSummary {
+  id: string;
+  name: string;
+  status: string;
+  phase: string | null;
+  seed_kind: string;
+  organism_name: string | null;
+  organism_taxid: number | null;
+  product_term: string | null;
+  year_from: number | null;
+  year_to: number | null;
+  candidate_count: number | null;
+  progress_message: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface DatasheetHostTally {
+  host: string;
+  requests: number;
+  successes: number;
+  blocked: number;
+  rate_limited: number;
+  errors: number;
+  not_found: number;
+  circuit_open: boolean;
+  mean_latency_s: number | null;
+}
+
+export interface DatasheetRunDetail extends DatasheetRunSummary {
+  organism_synonyms: string[];
+  product_synonyms: string[];
+  product_classes: string[];
+  template_name: string | null;
+  template_version: number | null;
+  log_tail: string | null;
+  candidate_counts: Record<string, number>;
+  discovery_summary: Record<string, unknown> | null;
+  acquisition_summary: Record<string, unknown> | null;
+  acquired_count: number | null;
+}
+
+export interface DatasheetCandidate {
+  id: string;
+  doi: string | null;
+  pmid: string | null;
+  pmc_id: string | null;
+  title: string | null;
+  journal: string | null;
+  publisher: string | null;
+  year: number | null;
+  found_in: string[];
+  oa_status: string | null;
+  license: string | null;
+  is_preprint: boolean;
+  preprint_doi: string | null;
+  version_of_record_doi: string | null;
+  doc_type: string | null;
+  is_review: boolean;
+  is_retracted: boolean;
+  relevance: string;
+  relevance_reason: string | null;
+  acquisition_status: string;
+  acquisition_route: string | null;
+  dedupe_group: string | null;
+  possible_duplicate_of: string[];
+  duplicate_evidence: string | null;
+  notes: string | null;
+}

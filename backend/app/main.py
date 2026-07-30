@@ -13,7 +13,17 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import admin, admin_evaluation, analytics, auth, chat, evaluation, feedback, search
+from app.api.routes import (
+    admin,
+    admin_datasheet,
+    admin_evaluation,
+    analytics,
+    auth,
+    chat,
+    evaluation,
+    feedback,
+    search,
+)
 from app.core.config import settings
 from app.core.logging import configure_logging
 
@@ -33,8 +43,8 @@ app = FastAPI(
     description="Internal RAG-based research literature assistant for the RLA Lab.",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/api/docs" if settings.app_env == "development" else None,
-    redoc_url="/api/redoc" if settings.app_env == "development" else None,
+    docs_url=None if settings.is_production else "/api/docs",
+    redoc_url=None if settings.is_production else "/api/redoc",
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
@@ -52,6 +62,7 @@ PREFIX = "/api/v1"
 app.include_router(auth.router, prefix=PREFIX)
 app.include_router(admin.router, prefix=PREFIX)
 app.include_router(admin_evaluation.router, prefix=PREFIX)
+app.include_router(admin_datasheet.router, prefix=PREFIX)
 app.include_router(evaluation.router, prefix=PREFIX)
 app.include_router(chat.router, prefix=PREFIX)
 app.include_router(search.router, prefix=PREFIX)

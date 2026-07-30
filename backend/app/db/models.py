@@ -434,6 +434,24 @@ class Document(Base):
     ingested_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     metadata_ = Column("metadata", JSONB)
 
+    # ── Metadata sidecar (datasheet feature, round 1) ─────────────────────────
+    # Lets retrieval filter by organism/product and lets citations reach section
+    # level, without touching the chunk embeddings.
+    taxids = Column(ARRAY(Integer))
+    product_classes = Column(ARRAY(String))
+    publisher = Column(String)
+    oa_status = Column(String)              # gold|hybrid|green|bronze|closed
+    doc_type = Column(String)               # primary|review|other
+    is_review = Column(Boolean, nullable=False, default=False)
+    is_retracted = Column(Boolean, nullable=False, default=False)
+    retraction_checked_at = Column(DateTime(timezone=True))
+    preprint_of_doi = Column(String)
+    full_text_source = Column(String)       # pmc_jats|publisher_xml|pdf_grobid|pdf_text|abstract_only
+    access_route = Column(String)
+    # False keeps an off-domain or unvetted document out of chat retrieval while
+    # leaving it available to the datasheet run that acquired it.
+    chat_visible = Column(Boolean, nullable=False, default=True)
+
     manifest = relationship("IngestionManifest", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
 
@@ -453,6 +471,10 @@ class DocumentChunk(Base):
     embedding_model = Column(String, nullable=False)
     # 768 dimensions for PubMedBERT. See CLAUDE.md §17 before changing.
     embedding = Column(Vector(768))
+    # Source section of this chunk: title|abstract|introduction|methods|results|
+    # discussion|supplementary. Drives section-level citation and lets extraction
+    # restrict itself to Methods/Results (see docs/DATASHEET_FEATURE_PLAN.md §7.0).
+    section_label = Column(String, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     document = relationship("Document", back_populates="chunks")
@@ -511,3 +533,158 @@ class Feedback(Base):
 
     message = relationship("ChatMessage", back_populates="feedback")
     user = relationship("User", back_populates="feedback")
+
+
+# ── Datasheet templates ───────────────────────────────────────────────────────
+# The datasheet column set is data, not code: admins add and reorder columns and
+# the extraction schema follows. See docs/DATASHEET_FEATURE_PLAN.md §4.1.
+
+class DatasheetTemplate(Base):
+    __tablename__ = "datasheet_templates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False, unique=True, index=True)
+    version = Column(Integer, nullable=False, default=1)
+    description = Column(Text)
+    is_default = Column(Boolean, nullable=False, default=False)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+    metadata_ = Column("metadata", JSONB)
+
+    columns = relationship(
+        "DatasheetTemplateColumn",
+        back_populates="template",
+        cascade="all, delete-orphan",
+        order_by="DatasheetTemplateColumn.order_index",
+    )
+    runs = relationship("DatasheetRun", back_populates="template")
+
+
+class DatasheetTemplateColumn(Base):
+    __tablename__ = "datasheet_template_columns"
+    __table_args__ = (
+        UniqueConstraint("template_id", "key", name="uq_datasheet_template_columns_key"),
+        UniqueConstraint("template_id", "order_index", name="uq_datasheet_template_columns_order"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    template_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("datasheet_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    order_index = Column(Integer, nullable=False)
+    key = Column(String, nullable=False)              # stable snake_case identifier
+    label = Column(String, nullable=False)            # exact spreadsheet header
+    kind = Column(String, nullable=False)             # bibliographic|free_text|controlled|numeric
+    vocabulary = Column(JSONB)                        # controlled columns only
+    extraction_hint = Column(Text)
+    source_hint = Column(String, nullable=False, default="any")  # metadata|abstract|fulltext|any
+    required = Column(Boolean, nullable=False, default=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+
+    template = relationship("DatasheetTemplate", back_populates="columns")
+
+
+# ── Datasheet runs ────────────────────────────────────────────────────────────
+
+class DatasheetRun(Base):
+    __tablename__ = "datasheet_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    requested_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    status = Column(String, nullable=False, default="queued", index=True)
+    phase = Column(String)                            # discovery|acquisition|ingestion|extraction|export
+    # Round 1 sets 'ingestion' so a run without an extraction pass finishes as
+    # 'succeeded' rather than looking like a failure.
+    stop_after_phase = Column(String, nullable=False, default="export")
+
+    seed_kind = Column(String, nullable=False)        # organism|bioproduct|organism_and_product
+    organism_name = Column(String)
+    organism_taxid = Column(Integer)
+    organism_synonyms = Column(JSONB)
+    product_term = Column(String)
+    product_ids = Column(JSONB)                       # {pubchem_cid, chebi_id, inchikey}
+    product_synonyms = Column(JSONB)
+    product_classes = Column(ARRAY(String))
+    year_from = Column(Integer)
+    year_to = Column(Integer)
+
+    template_id = Column(UUID(as_uuid=True), ForeignKey("datasheet_templates.id", ondelete="SET NULL"))
+    template_snapshot = Column(JSONB, nullable=False)  # frozen columns, for reproducibility
+    config_snapshot = Column(JSONB)
+    cache_path = Column(Text)
+    manifest_id = Column(UUID(as_uuid=True), ForeignKey("ingestion_manifests.id", ondelete="SET NULL"))
+    csv_path = Column(Text)
+
+    candidate_count = Column(Integer)
+    acquired_count = Column(Integer)
+    ingested_count = Column(Integer)
+    extracted_count = Column(Integer)
+    prompt_tokens = Column(Integer)
+    completion_tokens = Column(Integer)
+    cached_tokens = Column(Integer)
+
+    progress_message = Column(Text)
+    log_tail = Column(Text)
+    error = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    started_at = Column(DateTime(timezone=True))
+    finished_at = Column(DateTime(timezone=True))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+    template = relationship("DatasheetTemplate", back_populates="runs")
+    candidates = relationship(
+        "DatasheetCandidate", back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class DatasheetCandidate(Base):
+    __tablename__ = "datasheet_candidates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("datasheet_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    doi = Column(String)
+    pmid = Column(String)
+    pmc_id = Column(String)
+    title = Column(Text)
+    journal = Column(String)
+    publisher = Column(String)
+    year = Column(Integer)
+    found_in = Column(ARRAY(String))                  # ['pubmed','crossref',...]
+    oa_status = Column(String)
+    license = Column(String)
+    is_preprint = Column(Boolean, nullable=False, default=False)
+    # Kept after a preprint is collapsed into its version of record: bioRxiv serves
+    # JATS for it openly, which is often the only free full text for a paywalled VoR.
+    preprint_doi = Column(String)
+    version_of_record_doi = Column(String)
+    doc_type = Column(String)
+    is_review = Column(Boolean, nullable=False, default=False)
+    is_retracted = Column(Boolean, nullable=False, default=False)
+    retraction_checked_at = Column(DateTime(timezone=True))
+    relevance = Column(String, nullable=False, default="unknown")  # studies|mentions|off_topic|unknown
+    relevance_reason = Column(Text)
+    acquisition_route = Column(String)
+    acquisition_status = Column(String, nullable=False, default="pending", index=True)
+    resolver_url = Column(Text)
+    asset_path = Column(Text)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"))
+    dedupe_group = Column(String)
+    # Suspicion, not a decision: rows sharing a title are flagged for a human and
+    # left as separate candidates (see pipelines/discovery/canonicalize.py).
+    possible_duplicate_of = Column(ARRAY(String))
+    duplicate_evidence = Column(Text)
+    notes = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+    run = relationship("DatasheetRun", back_populates="candidates")

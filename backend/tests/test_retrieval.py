@@ -122,3 +122,59 @@ def test_apply_filters_source_adds_clause() -> None:
     filtered = _apply_filters(base_q, {"source": "pubmed"})
     compiled = str(filtered.compile())
     assert "source" in compiled.lower()
+
+
+# ── Sidecar filters (datasheet round 1) ───────────────────────────────────────
+
+def _compiled_with(filters: dict) -> str:
+    from app.db.models import Document
+    from sqlalchemy import select
+
+    return str(_apply_filters(select(Document.id), filters).compile()).lower()
+
+
+def test_apply_filters_taxid_adds_array_clause() -> None:
+    assert "taxids" in _compiled_with({"taxid": 4952})
+
+
+def test_apply_filters_product_class_adds_array_clause() -> None:
+    assert "product_classes" in _compiled_with({"product_class": "Organic Acids"})
+
+
+def test_apply_filters_doc_type_adds_clause() -> None:
+    assert "doc_type" in _compiled_with({"doc_type": "primary"})
+
+
+def test_apply_filters_section_label_adds_clause() -> None:
+    assert "section_label" in _compiled_with({"section_label": "methods"})
+
+
+def test_apply_filters_exclude_reviews_true_adds_clause() -> None:
+    assert "is_review" in _compiled_with({"exclude_reviews": True})
+
+
+def test_apply_filters_exclude_reviews_false_adds_no_clause() -> None:
+    """Reviews are included by default (decision D12); only an explicit True filters
+    them out, so a False must behave exactly like an absent key."""
+    q = FakeQuery()
+    result = _apply_filters(q, {"exclude_reviews": False})
+    assert result.clauses == []
+
+
+# ── Corpus visibility ─────────────────────────────────────────────────────────
+
+def test_corpus_visibility_excludes_retracted_and_hidden_documents() -> None:
+    from app.db.models import Document
+    from app.rag.retrieval import _apply_corpus_visibility
+    from sqlalchemy import select
+
+    compiled = str(_apply_corpus_visibility(select(Document.id)).compile()).lower()
+    assert "is_retracted" in compiled
+    assert "chat_visible" in compiled
+
+
+def test_corpus_visibility_is_separate_from_caller_filters() -> None:
+    """Kept out of _apply_filters so that "no filters" keeps meaning "no
+    caller-supplied filters" — the visibility rule is applied by the search paths."""
+    q = FakeQuery()
+    assert _apply_filters(q, None).clauses == []

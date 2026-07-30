@@ -1,12 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import type { FormEvent } from "react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { logout, sendInvitations } from "@/lib/api";
+import { sendInvitations } from "@/lib/api";
 import type { InvitationSendResponse } from "@/types";
+import AdminHeader from "./AdminHeader";
 
 const DEFAULT_INVITATION_TEMPLATE = `Hello,
 
@@ -27,12 +27,6 @@ export default function AdminInvitationsClient() {
   const [sending, setSending] = useState(false);
   const [inviteResult, setInviteResult] = useState<InvitationSendResponse | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
-
-  async function handleLogout() {
-    await logout();
-    router.push("/login");
-    router.refresh();
-  }
 
   async function handleSendInvitations(event: FormEvent) {
     event.preventDefault();
@@ -73,35 +67,7 @@ export default function AdminInvitationsClient() {
 
   return (
     <main className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">Invite Researchers</h1>
-            <p className="text-sm text-gray-500">Email invitations</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link
-              href="/admin"
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              Back to users
-            </Link>
-            <Link
-              href="/admin/stats"
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              Stats
-            </Link>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      <AdminHeader subtitle="Invite researchers" maxWidthClass="max-w-4xl" />
 
       <section className="mx-auto max-w-4xl px-6 py-6">
         <form

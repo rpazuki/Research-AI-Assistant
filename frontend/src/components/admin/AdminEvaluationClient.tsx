@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -25,7 +24,6 @@ import {
   listEvaluationReviewAssignments,
   listEvaluationRunResults,
   listEvaluationRuns,
-  logout,
   saveEvaluationReview,
   setEvaluationReleaseDecision,
 } from "@/lib/api";
@@ -48,6 +46,7 @@ import type {
   EvaluationRunResult,
   EvaluationWorkerStatus,
 } from "@/types";
+import AdminHeader from "./AdminHeader";
 
 const categories: EvaluationQuestionCategory[] = [
   "factual",
@@ -505,12 +504,6 @@ export default function AdminEvaluationClient() {
     }
   }
 
-  async function handleLogout() {
-    await logout();
-    router.push("/login");
-    router.refresh();
-  }
-
   async function handleCreateQuestionSet() {
     if (!setName.trim()) return;
     try {
@@ -802,31 +795,7 @@ export default function AdminEvaluationClient() {
 
   return (
     <main className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">Admin</h1>
-            <p className="text-sm text-gray-500">Evaluation workflow</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link href="/admin" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Users
-            </Link>
-            <Link href="/admin/stats" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Stats
-            </Link>
-            <Link href="/admin/ingestion" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Ingestion
-            </Link>
-            <Link href="/chat" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Chat
-            </Link>
-            <button type="button" onClick={handleLogout} className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      <AdminHeader subtitle="Evaluation workflow" maxWidthClass="max-w-7xl" />
 
       <section className="mx-auto max-w-7xl space-y-6 px-6 py-6">
         {error && (

@@ -25,253 +25,32 @@ For architectural context, see `docs/architecture.md`. For a concrete implementa
 
 ---
 
-## Prerequisites
+## Running it
 
-- Python 3.12
-- Node.js 20+
-- PostgreSQL 16 with pgvector extension  
-- An Anthropic API key  
-- An NCBI API key (free, for PubMed ingestion)
+**See [`run_and_deploy.md`](run_and_deploy.md)** — the single authoritative guide for running
+and deploying this project. It covers the three scenarios (`local`, `compose`, `server`),
+the configuration model, operations and troubleshooting.
 
-### Install PostgreSQL + pgvector (if not using Docker)
+The short version:
 
 ```bash
-brew install postgresql@16
-brew install pgvector
-
-# Start service
-brew services start postgresql@16
-
-# Create database
-createdb rlalab_ai
-
-# Enable pgvector extension
-psql rlalab_ai -c "CREATE EXTENSION IF NOT EXISTS vector;"
-```
-
-If `brew install pgvector` completes but PostgreSQL 16 still cannot see the `vector` extension, build it directly against the PostgreSQL 16 `pg_config`:
-
-```bash
-brew unpack pgvector --destdir /tmp/pgvector-src
-cd /tmp/pgvector-src/pgvector-*
-make PG_CONFIG="$(brew --prefix postgresql@16)/bin/pg_config"
-make install PG_CONFIG="$(brew --prefix postgresql@16)/bin/pg_config"
-psql rlalab_ai -c "CREATE EXTENSION IF NOT EXISTS vector;"
-```
-
-### Or: use Docker (preferred)
-
-```bash
-# Start only the database container
-docker compose up db -d
-```
-
-If your machine still exposes the legacy standalone binary, `docker-compose up db -d` is equivalent.
-
-
-Use the follwoing command to make sure the postgres accept connection, and the db is running.
-```bash
-docker exec -it rlalab_db pg_isready -U postgres -d rlalab_ai
-```
-and next
-```bash
-docker exec -it rlalab_db psql -U postgres -d rlalab_ai
-```
-inside psql, run
-```
-SELECT current_database(), current_user, version();
-\l
-\dt
-```
----
-
-## Configuration — API Keys
-
-Copy the example env file and fill in your keys:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and set these required values:
-
-```bash
-# Your Anthropic API key — get one at https://console.anthropic.com
-ANTHROPIC_API_KEY=sk-ant-...
-
-# NCBI API key — free registration at https://www.ncbi.nlm.nih.gov/account/
-# Without this, PubMed rate limit is 3 req/s instead of 10 req/s
-NCBI_EMAIL=your.email@imperial.ac.uk
-NCBI_API_KEY=your_ncbi_key_here
-
-# Generate a strong secret key for JWT signing
-# Run: python -c "import secrets; print(secrets.token_hex(32))"
-SECRET_KEY=replace_with_32_byte_hex_string
-```
-
-All other values in `.env` have working defaults for local development.
-
-## Configuration
-
-Runtime configuration is Docker-first and `.env`-first.
-
-The root `.env` file is the single runtime reference point for the local and
-deployed Compose stacks. Docker Compose reads `.env` and injects the relevant
-variables into each container:
-
-- `db` uses `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_HOST_PORT`.
-- `backend`, `ingestion-worker`, and `evaluation-worker` use `DATABASE_URL`, `APP_ENV`, secrets, LLM, NCBI, embedding, and retrieval variables.
-- `frontend` uses `FRONTEND_ENV`, `NEXT_PUBLIC_API_URL`, and `NEXT_PUBLIC_API_PROXY_PREFIX`.
-
-The backend does not read `backend/configs/backend.yaml`; that file has been
-removed to avoid multiple competing sources for the same setting. Backend code
-reads process environment variables through `backend/app/core/config.py`.
-
-Important database URL distinction:
-
-- Inside Docker containers, use the Compose service name and container port:
-  `postgresql+asyncpg://postgres:postgres@db:5432/rlalab_ai`
-- From the host machine, use the published host port:
-  `postgresql+asyncpg://postgres:postgres@localhost:5433/rlalab_ai`
-
-Alembic is the one intentional exception. Its default connection string lives in
-`backend/alembic.ini`, because migrations are a schema-management operation
-rather than ordinary app runtime configuration. When the backend container runs
-`alembic upgrade head`, Compose passes `ALEMBIC_DATABASE_URL=${DATABASE_URL}` so
-the migration runs against `db:5432` inside Docker. When you run Alembic from the
-host, it uses `backend/alembic.ini` by default.
-
-For host-side migration:
-
-```bash
-docker compose up -d db
-cd backend
-.venv/bin/alembic upgrade head
-```
-
-For app runtime, prefer Docker:
-
-```bash
-docker compose up --build
-```
-
-### YAML vs. TOML — when to use which
-
-The backend runtime no longer uses YAML. Remaining config formats have narrower
-roles:
-
-- **`.env`** — runtime/container configuration and secrets for Compose-managed services.
-- **`backend/alembic.ini`** — Alembic migration connection settings for host-side schema updates.
-- **YAML** — non-backend-runtime tool configs such as `evaluation/configs/evaluation.yaml` and `pipelines/configs/pipeline.defaults.yaml`.
-- **TOML** — pipeline-local declarative corpus/ingestion configs (`pipelines/configs/*.toml`, e.g. `abstract.pubmed.rlalab.toml`, `admin_ingestion_defaults.toml`).
-
----
-
-## Bootstrap — First Run
-
-### 1. Backend setup
-
-```bash
-cd backend
-
-# Create virtual environment
-python3.12 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -e ".[dev]"
-
-# Run database migrations
-alembic upgrade head
-```
-
-If you already installed backend dependencies before 2026-05-12, refresh them once so the local model stack matches the pinned runtime-compatible versions:
-
-```bash
-pip install -e ".[dev]" --upgrade
-```
-
-The backend also pins `bcrypt<4.1` because newer releases break Passlib-backed password hashing in this project.
-
-### 2. Create the first user
-
-```bash
-# From backend/ with venv active
-python scripts/create_user.py \
-  --email your.email@imperial.ac.uk \
-  --password yourpassword \
-  --role admin
-```
-
-To add more users (researcher role by default):
-
-```bash
-python scripts/create_user.py \
-  --email colleague@imperial.ac.uk \
-  --password theirpassword \
-  --full-name "Jane Smith"
-```
-
-Supported user roles are:
-
-- `researcher` — normal chat/search access.
-- `evaluator` — researcher access plus assigned evaluation review tasks at `/evaluation/reviews`.
-- `admin` — full admin access, including user management, ingestion, and evaluation management.
-
-### 3. Frontend setup
-
-```bash
-cd frontend
-npm install
-```
-
-The frontend proxies authenticated API calls through Next.js route handlers under `/api/auth/*` and `/api/backend/*`. For local development, `frontend/configs/frontend.yaml` points to `http://localhost:8000`; set `NEXT_PUBLIC_API_URL` only when you need to override the YAML value.
-
----
-
-## Running in Development
-
-Open three terminals:
-
-**Terminal 1 — Backend**
-```bash
-cd backend
-source .venv/bin/activate
-uvicorn app.main:app --reload --port 8000
-```
-
-**Terminal 2 — Frontend**
-```bash
-cd frontend
-npm run dev
+cp .env.example .env        # fill in SECRET_KEY, ANTHROPIC_API_KEY, POSTGRES_PASSWORD, NCBI_*
+docker compose up -d --build
+docker compose exec backend python scripts/create_user.py \
+  --email you@imperial.ac.uk --password '<choose-one>' --role admin
 # → http://localhost:3000
 ```
 
-**Terminal 3 — Database** (if using Docker)
-```bash
-docker compose up -d --build db
-```
+Postgres always runs as a container — there is nothing to install beyond Docker. For the dev
+inner loop (backend and frontend on the host with reload), see `run_and_deploy.md` §4.
 
-API docs available at: `http://localhost:8000/api/docs`
+### Configuration in one paragraph
 
-
-**Terminal 4 — dev on Docker and frontend on local** (if using Docker)
-```bash
-docker compose up -d db backend ingestion-worker evaluation-worker
-cd frontend
-npm run dev -- --hostname 0.0.0.0
-```
-
-Notes:
-
-- The first backend startup downloads the PubMedBERT checkpoint (~440 MB) into `backend/model_cache` unless it is already cached.
-- Backend startup currently preloads the embedding model. The verified local-compatible stack is `torch 2.2.x` plus `transformers 4.51.x`; if startup fails with a `torch.load` safety error, rerun `pip install -e ".[dev]" --upgrade` from `backend/`.
-- The frontend expects the backend at `http://localhost:8000` unless `NEXT_PUBLIC_API_URL` is overridden.
-- To watch workers, run
-```bash
-docker compose logs -f ingestion-worker
-docker compose logs -f evaluation-worker
-```
+One variable names the scenario: `RLALAB_ENV = local | compose | server`, read by all four
+components. `.env` holds **secrets and behaviour only — never a hostname, port or URL**, which
+is what makes `source .env` safe in any shell. Addresses live in `.env.compose` / `.env.server`
+and are read only by Compose. Defaults serve `local`, because Compose always injects values
+explicitly and a bare shell cannot. Details: `run_and_deploy.md` §1 and CLAUDE.md §14.
 
 ## Tests
 
@@ -385,21 +164,19 @@ Evaluation documentation is split for two audiences:
 
 ## Production Deployment
 
+Full procedure in [`run_and_deploy.md`](run_and_deploy.md) §5. In brief:
+
 ```bash
-# Copy and fill in production env (strong SECRET_KEY, real DB credentials)
-cp .env.example .env
-# edit .env ...
-
-# Build and start all services
-docker-compose -f docker-compose.prod.yml up -d
-
-# Check logs
-docker-compose -f docker-compose.prod.yml logs -f backend
+cp .env.example .env         # strong SECRET_KEY, real credentials; chmod 600
+# edit .env.server: set the real hostname in CORS_ORIGINS and APP_PUBLIC_URL
+mkdir -p nginx/ssl           # supply nginx/nginx.conf + fullchain.pem/privkey.pem
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml logs -f backend
 ```
 
-Production compose includes: PostgreSQL, FastAPI backend (2 web workers), ingestion worker, evaluation worker, Next.js frontend, nginx reverse proxy.
-
-You must supply `nginx/nginx.conf` and SSL certificates at `nginx/ssl/` before using the production compose.
+The production stack adds nginx (TLS) and does **not** publish Postgres. `RLALAB_ENV=server`
+is set by the compose file — do not set it by hand. Pass `-f docker-compose.prod.yml` on every
+command, or Docker will load the dev stack instead.
 
 ### Recommended hosting (Imperial/Bezos Centre)
 

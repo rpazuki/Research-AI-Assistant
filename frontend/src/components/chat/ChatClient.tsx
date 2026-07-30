@@ -13,6 +13,7 @@ import {
   deleteSession,
   getAdminUserSession,
   getChatQuota,
+  getMe,
   getSession,
   listAdminUserSessions,
   listMyEvaluationReviewTasks,
@@ -89,6 +90,7 @@ export default function ChatClient({
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [contextMenu, setContextMenu] = useState<SessionContextMenuState | null>(null);
   const [pendingReviewCount, setPendingReviewCount] = useState<number | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const skipBlurSaveRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   
@@ -106,6 +108,7 @@ export default function ChatClient({
     if (!isReadOnly) {
       void loadQuota();
       void loadPendingReviewCount();
+      void loadRole();
     }
   }, [adminUserId, isReadOnly]);
 
@@ -229,6 +232,21 @@ export default function ChatClient({
       );
     } catch {
       setPendingReviewCount(null);
+    }
+  }
+
+  async function loadRole() {
+    if (isReadOnly) {
+      return;
+    }
+
+    // Only decides whether to offer the shortcut. The admin routes and API are
+    // gated server-side, so a wrong answer here cannot grant access.
+    try {
+      const me = await getMe();
+      setIsAdmin(me.role === "admin");
+    } catch {
+      setIsAdmin(false);
     }
   }
 
@@ -661,6 +679,14 @@ export default function ChatClient({
                     {pendingReviewCount}
                   </span>
                 )}
+              </button>
+            )}
+            {!isReadOnly && isAdmin && (
+              <button
+                onClick={() => router.push("/admin")}
+                className="w-full rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-100"
+              >
+                Admin
               </button>
             )}
           </div>

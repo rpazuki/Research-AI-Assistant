@@ -12,6 +12,7 @@ const logout = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh }),
+  usePathname: () => "/admin/stats",
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -87,7 +88,7 @@ const stats = {
 
 const documentErrorReports = [
   {
-    cache_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative",
+    cache_path: "data/corpora/rlalab-pubmed-v1/cumulative",
     error_file_path: "/app/data/corpora/rlalab-pubmed-v1/cumulative/normalized/documents.errors.jsonl",
     exists: true,
     record_count: 1,
@@ -101,7 +102,7 @@ const documentErrorReports = [
     parse_errors: [],
   },
   {
-    cache_path: "/app/data/corpora/rlalab-pubmed-v1/test-2024",
+    cache_path: "data/corpora/rlalab-pubmed-v1/test-2024",
     error_file_path: "/app/data/corpora/rlalab-pubmed-v1/test-2024/normalized/documents.errors.jsonl",
     exists: false,
     record_count: 0,
@@ -145,7 +146,7 @@ describe("AdminStatsClient", () => {
     expect(screen.getByText("4m 30s")).toBeInTheDocument();
     expect(screen.getByText("Normalized document errors")).toBeInTheDocument();
     expect(screen.getByLabelText("Cache path")).toHaveValue(
-      "/app/data/corpora/rlalab-pubmed-v1/cumulative"
+      "data/corpora/rlalab-pubmed-v1/cumulative"
     );
     expect(screen.getByText(/No text extracted by pypdf/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Manage ingestion" })).toHaveAttribute(

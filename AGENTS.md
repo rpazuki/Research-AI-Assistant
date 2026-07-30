@@ -764,68 +764,105 @@ This provides claim-level context, unlike the original GutFeeling chip-only disp
 
 ## 14. Environment Variables
 
-All secrets and runtime config live in `.env`. See `.env.example` for required keys.
+**One variable names the scenario; everything else derives from it.** Full detail in
+`run_and_deploy.md` §1.
+
+```
+RLALAB_ENV = local | compose | server
+```
+
+| Scenario | Meaning | Set by |
+|---|---|---|
+| `local` | host processes; Postgres reached on its published port | nobody — it is the default |
+| `compose` | containers on a dev machine | `docker-compose.yml` |
+| `server` | containers on the deployment VM, production behaviour | `docker-compose.prod.yml` |
+
+All four components read this same variable: `backend/app/core/config.py`,
+`frontend/configs/frontend.yaml`, `pipelines/configs/pipeline.defaults.yaml`,
+`evaluation/configs/evaluation.yaml`.
+
+### Three config files, one job each
+
+| File | Contains | Loaded by | In git |
+|---|---|---|---|
+| `.env` | secrets + behaviour. **No hostnames, no ports, no URLs.** | every scenario | no |
+| `.env.compose` | addresses for containers on a dev machine | `docker-compose.yml` | yes |
+| `.env.server` | addresses for the deployment VM | `docker-compose.prod.yml` | yes |
+
+Because `.env` holds no addresses, `source .env` is safe in any shell. **Never add a hostname,
+port or service URL to `.env`** — that reintroduces the class of bug where a host process is
+handed a Compose service name (`getaddrinfo ENOTFOUND backend`).
 
 ```bash
-# Database
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/rlalab_ai
-
-# Auth
+# .env — secrets and behaviour only
+RLALAB_ENV=local
+POSTGRES_DB=rlalab_ai
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=<password>
 SECRET_KEY=<random 32-byte hex>
 ACCESS_TOKEN_EXPIRE_MINUTES=480
-
-# LLM
 LLM_PROVIDER=anthropic
-LLM_MODEL=Codex-sonnet-4-6
+LLM_MODEL=claude-sonnet-4-6
 ANTHROPIC_API_KEY=<your key>
-
-# Embeddings
 EMBEDDING_MODEL=pubmedbert
 EMBEDDING_BATCH_SIZE=32
-EMBEDDING_CACHE_DIR=./model_cache
-
-# NCBI / PubMed
 NCBI_EMAIL=<your email>
 NCBI_API_KEY=<your key>
-
-# RAG parameters
 RETRIEVAL_VECTOR_TOP_K=10
 RETRIEVAL_LEXICAL_TOP_K=10
 RETRIEVAL_FINAL_TOP_K=5
 RERANKER_ENABLED=false
-
-# App
-APP_ENV=development   # development | production
 LOG_LEVEL=INFO
-CORS_ORIGINS=http://localhost:3000
+
+# .env.compose — addresses only (committed)
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/rlalab_ai
+CORS_ORIGINS=["http://localhost:3000"]
+APP_PUBLIC_URL=http://localhost:3000
 ```
+
+### Rules for agents
+
+- **Defaults serve `local`.** Compose always injects addresses explicitly, so it never needs a
+  default; a bare shell has no injection mechanism, so the defaults must cover it. Hence
+  `Settings.database_url` defaults to `localhost:5433`, never `db:5432`.
+- **Each address has exactly one owner.** Database → `Settings` (+ the address files).
+  Backend URL for the frontend → `frontend/configs/frontend.yaml`. Evaluation API URL →
+  `evaluation/configs/evaluation.yaml`. Do not restate another component's address.
+- **The backend has no YAML config file** and must not gain one; it is env-var-only by design
+  (`backend/app/core/config.py` docstring).
+- Ask `settings.is_production` / `settings.is_containerised` rather than comparing
+  `rlalab_env` to a string.
+- `${VAR}` interpolation in a compose file reads the shell and the project `.env` **only** —
+  a service-level `env_file:` does not feed it. Anything used for interpolation must stay in
+  `.env` (or be hardcoded in the compose file, as the published db port is).
 
 ---
 
 ## 15. Development Setup
 
+**`run_and_deploy.md` is the authoritative guide.** Summary of the dev inner loop
+(`RLALAB_ENV` unset → `local`):
+
 ```bash
-# 1. Start Postgres with pgvector
-docker compose up db -d
+# 1. Postgres — always a container; nothing to install
+docker compose up -d db                  # published on localhost:5433
 
-# 2. Backend
+# 2. Secrets into this shell. Safe: .env holds no addresses (see §14)
+set -a; source .env; set +a
+
+# 3. Backend — no DATABASE_URL needed, the `local` default already points at :5433
 cd backend
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-alembic upgrade head
-uvicorn app.main:app --reload --port 8000
+python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m alembic upgrade head
+.venv/bin/python -m uvicorn app.main:app --reload --port 8000
 
-# 3. Frontend
-cd frontend
-npm install
-npm run dev   # → http://localhost:3000
+# 4. Frontend — needs no environment at all
+cd frontend && npm install && npm run dev      # → http://localhost:3000
 
-# 4. Run ingestion (first time)
-cd pipelines
-python -m indexing.build_index --config configs/corpus.rlalab.toml
+# 5. Everything in containers instead of steps 2-4
+docker compose up -d --build
 
-# 5. Run ALL tests — backend unit + E2E + frontend unit (MANDATORY before any PR or merge)
+# 6. Run ALL tests — backend unit + E2E + frontend unit (MANDATORY before any PR or merge)
 cd backend && .venv/bin/python -m pytest tests/ -v --tb=short
 cd ../frontend && npm test -- --run && npm run type-check
 ```

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -13,7 +12,6 @@ import {
   listIngestionConfigs,
   listIngestionJobs,
   listIngestionUploads,
-  logout,
   uploadIngestionPdfFolder,
 } from "@/lib/api";
 import type {
@@ -24,6 +22,7 @@ import type {
   IngestionUploadBatch,
   IngestionWorkerStatus,
 } from "@/types";
+import AdminHeader from "./AdminHeader";
 
 function formatDate(value: string | null) {
   if (!value) return "Not yet";
@@ -215,12 +214,6 @@ export default function AdminIngestionClient() {
     }
   }
 
-  async function handleLogout() {
-    await logout();
-    router.push("/login");
-    router.refresh();
-  }
-
   async function handleUpload() {
     const files = Array.from(folderInputRef.current?.files ?? []);
     if (files.length === 0) {
@@ -290,37 +283,7 @@ export default function AdminIngestionClient() {
 
   return (
     <main className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">Admin</h1>
-            <p className="text-sm text-gray-500">Ingestion operations</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link href="/admin/ingestion/config" className="rounded-md border border-blue-200 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50">
-              Config
-            </Link>
-            <Link href="/admin/ingestion/acquisition" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Acquisition
-            </Link>
-            <Link href="/admin" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Users
-            </Link>
-            <Link href="/admin/stats" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Stats
-            </Link>
-            <Link href="/admin/evaluation" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Evaluation
-            </Link>
-            <Link href="/chat" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Chat
-            </Link>
-            <button type="button" onClick={handleLogout} className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      <AdminHeader subtitle="Ingestion operations" />
 
       <section className="mx-auto grid max-w-6xl gap-6 px-6 py-6">
         {error && <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}

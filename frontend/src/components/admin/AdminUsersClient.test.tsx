@@ -11,6 +11,7 @@ const logout = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh }),
+  usePathname: () => "/admin",
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -125,7 +126,7 @@ describe("AdminUsersClient", () => {
     expect(screen.getByText("inactive-limited@example.com").closest("tr")).not.toHaveTextContent(
       "Token limit"
     );
-    expect(screen.getByRole("link", { name: "Invite users" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Invitations" })).toHaveAttribute(
       "href",
       "/admin/invitations"
     );

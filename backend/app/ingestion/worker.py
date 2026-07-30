@@ -19,7 +19,13 @@ from sqlalchemy import select
 
 from app.db.models import IngestionJob
 from app.db.session import AsyncSessionLocal
-from app.ingestion.admin_service import JOB_WORK_ROOT, _REPO_ROOT, write_worker_heartbeat
+from app.ingestion.admin_service import (
+    JOB_WORK_ROOT,
+    _REPO_ROOT,
+    resolve_cache_path,
+    store_cache_path,
+    write_worker_heartbeat,
+)
 
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -125,7 +131,7 @@ async def update_job_progress(
                     if "chunk_count" in payload:
                         job.chunk_count = int(payload["chunk_count"])
                     if "cache_path" in payload and payload["cache_path"]:
-                        job.cache_path = str(payload["cache_path"])
+                        job.cache_path = store_cache_path(str(payload["cache_path"]))
     if cancelled:
         raise IngestionCancelled()
 
@@ -165,11 +171,14 @@ async def run_job(job_id: uuid.UUID) -> None:
 
     heartbeat_task = asyncio.create_task(maintain_running_heartbeat(job_id))
     try:
+        # The stored path is repo-relative; build_index would resolve it against
+        # the process CWD, which is not the repo root for a host-run worker.
+        resolved_cache_path = resolve_cache_path(cache_path)
         result = await build_index(
             str(config_path),
             from_date=from_date,
             year=year,
-            cache_path=cache_path,
+            cache_path=str(resolved_cache_path) if resolved_cache_path else None,
             use_cache=True,
             local_only=local_only,
             write_queue=bool(options.get("write_acquisition_queue")),
@@ -222,20 +231,37 @@ async def run_job(job_id: uuid.UUID) -> None:
             job.document_count = int(result["document_count"])
             job.chunk_count = int(result["chunk_count"])
             if result.get("cache_path"):
-                job.cache_path = str(result["cache_path"])
+                job.cache_path = store_cache_path(str(result["cache_path"]))
             job.log_tail = append_log(job.log_tail, "Succeeded")
     write_worker_heartbeat(state="idle")
 
 
 async def worker_loop(poll_interval_s: float = 5.0) -> None:
-    logger.info("Ingestion worker started")
+    """Drive ingestion jobs, and datasheet runs when no ingestion job is waiting.
+
+    One process for both queues on purpose: the per-host rate limits are process
+    scoped, so two workers with independent buckets would double real egress to
+    NCBI, Crossref and every publisher (plan §6.5). Ingestion keeps priority
+    because it is the interactive path an admin is watching.
+    """
+    from app.datasheet.worker import poll_once as poll_datasheet_run  # local: avoids a cycle
+
+    logger.info("Ingestion worker started (also serving datasheet runs)")
     write_worker_heartbeat(state="started")
     while True:
         job_id = await claim_next_job()
-        if job_id is None:
-            await asyncio.sleep(poll_interval_s)
+        if job_id is not None:
+            await run_job(job_id)
             continue
-        await run_job(job_id)
+
+        try:
+            claimed_datasheet_run = await poll_datasheet_run()
+        except Exception:  # noqa: BLE001 - a datasheet failure must not stop ingestion
+            logger.exception("datasheet run polling failed")
+            claimed_datasheet_run = False
+
+        if not claimed_datasheet_run:
+            await asyncio.sleep(poll_interval_s)
 
 
 def main() -> None:

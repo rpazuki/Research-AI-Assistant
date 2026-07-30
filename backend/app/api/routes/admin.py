@@ -27,7 +27,7 @@ from app.ingestion.admin_service import (
     read_cache_document_error_reports,
     save_ingestion_config,
     save_pdf_upload_folder,
-    validate_cache_path,
+    store_cache_path,
 )
 from app.schemas.admin import (
     AdminStatsResponse,
@@ -247,7 +247,8 @@ async def create_ingestion_job(
         if upload_batch is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF upload batch not found")
 
-    cache_path = validate_cache_path(body.cache_path)
+    # Stored repo-relative so the worker resolves it against its own filesystem.
+    cache_path = store_cache_path(body.cache_path)
     options = {
         "write_acquisition_queue": body.write_acquisition_queue or body.mode == "queue_only",
         "include_cached_fulltext": body.include_cached_fulltext,

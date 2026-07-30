@@ -1,14 +1,13 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
   createIngestionConfig,
   getIngestionConfig,
   listIngestionConfigs,
-  logout,
   updateIngestionConfig,
 } from "@/lib/api";
 import type {
@@ -16,6 +15,7 @@ import type {
   IngestionConfigSummary,
   TomlValue,
 } from "@/types";
+import AdminHeader from "./AdminHeader";
 
 type SourceName =
   | "pubmed_abstract"
@@ -331,18 +331,18 @@ function LabelWithTooltip({
   description: string;
 }) {
   return (
-    <span className="flex items-center gap-1 font-medium text-gray-700">
-      <span>
+    <span className="flex min-w-0 items-center gap-1 font-medium text-gray-700">
+      <span className="min-w-0 break-words">
         {label}
         {required ? <span className="text-red-600"> *</span> : null}
       </span>
-      <span aria-hidden="true" className="group relative inline-flex">
+      <span aria-hidden="true" className="group relative inline-flex flex-shrink-0">
         <span
           className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-gray-300 bg-white text-[10px] font-semibold leading-none text-gray-500"
         >
           ?
         </span>
-        <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-64 -translate-x-1/2 rounded-md border border-gray-200 bg-gray-950 px-3 py-2 text-xs font-normal leading-relaxed text-white shadow-lg group-hover:block group-focus-within:block">
+        <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-64 max-w-[80vw] -translate-x-1/2 rounded-md border border-gray-200 bg-gray-950 px-3 py-2 text-xs font-normal leading-relaxed text-white shadow-lg group-hover:block group-focus-within:block">
           {description}
         </span>
       </span>
@@ -366,7 +366,7 @@ function FieldControl({
       description={field.description}
     />
   );
-  const fieldClassName = field.wide ? "md:col-span-2" : "";
+  const fieldClassName = field.wide ? "min-w-0 md:col-span-2" : "min-w-0";
 
   if (field.type === "checkbox") {
     return (
@@ -389,7 +389,7 @@ function FieldControl({
           value={valueToInput(value, field) as string}
           onChange={(event) => onChange(parseInputValue(field, event.target.value))}
           rows={field.type === "textarea" ? 8 : 5}
-          className="rounded-md border border-gray-300 px-3 py-2 font-mono text-sm"
+          className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2 font-mono text-sm"
         />
       </label>
     );
@@ -402,7 +402,7 @@ function FieldControl({
         <select
           value={valueToInput(value, field) as string}
           onChange={(event) => onChange(parseInputValue(field, event.target.value))}
-          className="rounded-md border border-gray-300 px-3 py-2"
+          className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2"
         >
           {field.options?.map((option) => (
             <option key={option.value} value={option.value}>
@@ -422,13 +422,24 @@ function FieldControl({
         step={field.step}
         value={valueToInput(value, field) as string}
         onChange={(event) => onChange(parseInputValue(field, event.target.value))}
-        className="rounded-md border border-gray-300 px-3 py-2"
+        className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2"
       />
     </label>
   );
 }
 
+const MIN_LIST_WIDTH = 220;
+const MAX_LIST_WIDTH = 560;
+const DEFAULT_LIST_WIDTH = 320;
+
 export default function AdminIngestionConfigClient() {
+  // Draggable split between the config list and the editor, same interaction as
+  // the chat sidebars. Config names and TOML lines are both long, so a fixed
+  // 320px column forced truncation on one side or the other.
+  const [listWidth, setListWidth] = useState(DEFAULT_LIST_WIDTH);
+  const [isDragging, setIsDragging] = useState(false);
+  const splitRef = useRef<HTMLDivElement>(null);
+
   const router = useRouter();
   const [configs, setConfigs] = useState<IngestionConfigSummary[]>([]);
   const [selectedName, setSelectedName] = useState("");
@@ -447,6 +458,27 @@ export default function AdminIngestionConfigClient() {
   useEffect(() => {
     void loadConfigs();
   }, []);
+
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!splitRef.current) return;
+      const bounds = splitRef.current.getBoundingClientRect();
+      setListWidth(
+        Math.max(MIN_LIST_WIDTH, Math.min(MAX_LIST_WIDTH, event.clientX - bounds.left))
+      );
+    };
+    const handleMouseUp = () => setIsDragging(false);
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDragging]);
 
   async function loadConfigs(nextSelectedName?: string) {
     try {
@@ -529,45 +561,29 @@ export default function AdminIngestionConfigClient() {
     }
   }
 
-  async function handleLogout() {
-    await logout();
-    router.push("/login");
-    router.refresh();
-  }
-
   return (
     <main className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">Admin</h1>
-            <p className="text-sm text-gray-500">Ingestion config</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link href="/admin/ingestion" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Ingestion
-            </Link>
-            <Link href="/admin" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Users
-            </Link>
-            <button type="button" onClick={handleLogout} className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      <AdminHeader subtitle="Ingestion config" />
 
       <section className="mx-auto grid max-w-6xl gap-6 px-6 py-6">
         {error && <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
         {message && <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">{message}</div>}
 
-        <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-          <aside className="rounded-lg border border-gray-200 bg-white">
+        <div ref={splitRef} className="flex flex-col gap-6 lg:flex-row lg:gap-0">
+          <aside
+            // The dragged width belongs to the split layout only. Below `lg` the
+            // panels stack and the splitter is hidden, so an inline pixel width
+            // would leave a narrow orphan column above a full-width editor —
+            // which is what put the dropdown in its own skinny box. Passing it as
+            // a custom property lets the `lg:` variant apply it and nothing else.
+            style={{ "--config-list-width": `${listWidth}px` } as CSSProperties}
+            className="w-full min-w-0 max-w-full flex-shrink-0 overflow-hidden rounded-lg border border-gray-200 bg-white lg:w-[var(--config-list-width)]"
+          >
             <div className="border-b border-gray-200 px-4 py-3">
               <h2 className="text-sm font-semibold text-gray-800">Config file</h2>
             </div>
-            <div className="grid gap-4 px-4 py-4 text-sm">
-              <label className="grid gap-1">
+            <div className="grid min-w-0 gap-4 px-4 py-4 text-sm">
+              <label className="grid min-w-0 gap-1">
                 <LabelWithTooltip
                   label="Existing config"
                   description="Approved TOML file from pipelines/configs to load into the editor."
@@ -576,7 +592,7 @@ export default function AdminIngestionConfigClient() {
                   value={selectedName}
                   disabled={loading || isCreating}
                   onChange={(event) => void loadConfig(event.target.value)}
-                  className="rounded-md border border-gray-300 px-3 py-2"
+                  className="w-full min-w-0 max-w-full truncate rounded-md border border-gray-300 px-3 py-2"
                 >
                   {configs.map((config) => (
                     <option key={config.name} value={config.name}>
@@ -589,7 +605,7 @@ export default function AdminIngestionConfigClient() {
                 New config
               </button>
               {isCreating && (
-                <label className="grid gap-1">
+                <label className="grid min-w-0 gap-1">
                   <LabelWithTooltip
                     label="New filename"
                     description="Plain, non-conflicting .toml filename to create under pipelines/configs."
@@ -597,18 +613,38 @@ export default function AdminIngestionConfigClient() {
                   <input
                     value={newName}
                     onChange={(event) => setNewName(event.target.value)}
-                    className="rounded-md border border-gray-300 px-3 py-2"
+                    className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2"
                   />
                 </label>
               )}
-              <div className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600">
+              <div className="min-w-0 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600">
                 <div className="font-semibold text-gray-700">Current path</div>
-                <div className="mt-1 break-words">{loadedPath || "New file under pipelines/configs"}</div>
+                <div
+                  title={loadedPath || undefined}
+                  className="mt-1 overflow-x-auto whitespace-nowrap pb-1 font-mono"
+                >
+                  {loadedPath || "New file under pipelines/configs"}
+                </div>
               </div>
             </div>
           </aside>
 
-          <div className="rounded-lg border border-gray-200 bg-white">
+          {/* Splitter. Hidden on narrow screens, where the panels stack. */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize config list"
+            title="Drag to resize the config list"
+            onMouseDown={() => setIsDragging(true)}
+            onDoubleClick={() => setListWidth(DEFAULT_LIST_WIDTH)}
+            className={`hidden w-1.5 flex-shrink-0 cursor-col-resize rounded transition-colors lg:mx-3 lg:block ${
+              isDragging ? "bg-blue-400" : "bg-gray-200 hover:bg-blue-400"
+            }`}
+          />
+
+          {/* min-w-0 so the editor can shrink: a flex child defaults to its content
+              width, which would push the splitter off-screen on long TOML lines. */}
+          <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white">
             <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
               <h2 className="text-sm font-semibold text-gray-800">{isCreating ? "Create TOML config" : "Edit TOML config"}</h2>
               <button

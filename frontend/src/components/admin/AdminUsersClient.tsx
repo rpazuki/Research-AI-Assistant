@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { listAdminUsers, logout } from "@/lib/api";
+import { listAdminUsers } from "@/lib/api";
 import type { AdminUserSummary } from "@/types";
+import AdminHeader from "./AdminHeader";
 import { formatCount, formatLastActive, formatLatency } from "./usage";
 
 function getUserStatus(user: AdminUserSummary) {
@@ -53,61 +54,9 @@ export default function AdminUsersClient() {
     }
   }
 
-  async function handleLogout() {
-    await logout();
-    router.push("/login");
-    router.refresh();
-  }
-
   return (
     <main className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">Admin</h1>
-            <p className="text-sm text-gray-500">User access</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link
-              href="/admin/stats"
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              Stats
-            </Link>
-            <Link
-              href="/admin/ingestion"
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              Ingestion
-            </Link>
-            <Link
-              href="/admin/evaluation"
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              Evaluation
-            </Link>
-            <Link
-              href="/admin/invitations"
-              className="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-            >
-              Invite users
-            </Link>
-            <Link
-              href="/chat"
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              Chat
-            </Link>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      <AdminHeader subtitle="User access" />
 
       <section className="mx-auto max-w-6xl px-6 py-6">
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">

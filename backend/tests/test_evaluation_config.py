@@ -15,13 +15,13 @@ def test_evaluation_yaml_environment_and_env_overrides(monkeypatch, tmp_path) ->
         textwrap.dedent(
             f"""
             defaults:
-              evaluation_env: "development"
+              evaluation_env: "local"
               api_url: "http://localhost:8000"
               retrieval_top_k: 12
               reports_dir: "{reports_dir}"
             environments:
-              deployed:
-                evaluation_env: "production"
+              server:
+                evaluation_env: "server"
                 api_url: "https://assistant.example"
                 retrieval_top_k: 25
             """
@@ -29,12 +29,12 @@ def test_evaluation_yaml_environment_and_env_overrides(monkeypatch, tmp_path) ->
         encoding="utf-8",
     )
     monkeypatch.setenv("EVALUATION_CONFIG_FILE", str(config_path))
-    monkeypatch.setenv("EVALUATION_ENV", "deployed")
+    monkeypatch.setenv("RLALAB_ENV", "server")
     monkeypatch.setenv("EVALUATION_API_URL", "https://override.example")
 
     config = load_evaluation_config()
 
-    assert config.evaluation_env == "production"
+    assert config.evaluation_env == "server"
     assert config.api_url == "https://override.example"
     assert config.retrieval_top_k == 25
     assert config.reports_dir == reports_dir

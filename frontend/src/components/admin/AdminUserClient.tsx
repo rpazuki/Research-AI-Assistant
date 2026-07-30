@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -11,6 +10,7 @@ import {
   updateAdminUserTokenLimit,
 } from "@/lib/api";
 import type { AdminUserSummary, User } from "@/types";
+import AdminHeader from "./AdminHeader";
 import { formatCount, formatLastActive, formatLatency } from "./usage";
 
 const TOKEN_LIMIT_INCREMENT_OPTIONS = Array.from({ length: 100 }, (_, index) => index + 1).map((millions) => ({
@@ -152,20 +152,7 @@ export default function AdminUserClient({ userId }: { userId: string }) {
 
   return (
     <main className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">User Profile</h1>
-            <p className="text-sm text-gray-500">Access status</p>
-          </div>
-          <Link
-            href="/admin"
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-          >
-            Back to users
-          </Link>
-        </div>
-      </header>
+      <AdminHeader subtitle="User profile" maxWidthClass="max-w-4xl" />
 
       <section className="mx-auto max-w-4xl px-6 py-6">
         <div className="rounded-lg border border-gray-200 bg-white">
