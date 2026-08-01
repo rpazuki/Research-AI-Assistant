@@ -97,6 +97,36 @@ environments:
     expect(loadFrontendConfig().backendApiUrl).toBe("http://localhost:8000");
   });
 
+  it("refuses to start a container scenario without its config file", async () => {
+    // The fallback address is localhost:8000. Inside the frontend container that
+    // is nothing, so every server-side call fails with ECONNREFUSED and the only
+    // visible symptom is a 500 from /api/auth/login. Fail where the cause is named.
+    vi.stubEnv("FRONTEND_CONFIG_FILE", path.join(os.tmpdir(), "definitely-absent-frontend.yaml"));
+    const { loadFrontendConfig } = await loadConfigModule();
+
+    expect(() => loadFrontendConfig("server")).toThrow(/config not found/i);
+    expect(() => loadFrontendConfig("compose")).toThrow(/RLALAB_ENV=compose/);
+  });
+
+  it("still falls back to built-in defaults for the local scenario", async () => {
+    // A host checkout without the file is fine: the defaults ARE the local addresses.
+    vi.stubEnv("FRONTEND_CONFIG_FILE", path.join(os.tmpdir(), "definitely-absent-frontend.yaml"));
+    const { loadFrontendConfig } = await loadConfigModule();
+
+    expect(loadFrontendConfig("local").backendApiUrl).toBe("http://localhost:8000");
+  });
+
+  it("ships the config file in the runtime image", () => {
+    // The runner stage copies only what it is told to. `configs/` is read at
+    // runtime and is easy to forget, and forgetting it produces a login 500 with
+    // no mention of configuration anywhere in the logs.
+    const dockerfile = fs.readFileSync(path.resolve(process.cwd(), "Dockerfile"), "utf8");
+    const runner = dockerfile.slice(dockerfile.indexOf("AS runner"));
+
+    expect(runner).toMatch(/COPY --from=builder [^\n]*\/app\/configs/);
+    expect(runner).toMatch(/ENV FRONTEND_CONFIG_FILE=/);
+  });
+
   it("does not treat NODE_ENV=production as the server scenario", async () => {
     const file = writeConfig(`
 defaults:

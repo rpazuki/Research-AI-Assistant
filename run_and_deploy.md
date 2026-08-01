@@ -246,8 +246,14 @@ snippet), using service names because nginx runs inside the network:
 ```nginx
 events {}
 http {
-  upstream frontend { server frontend:3000; }
-  upstream backend  { server backend:8000;  }
+  # Docker's embedded DNS. An `upstream { server frontend:3000; }` block resolves
+  # once, while the configuration is being read, so nginx exits with
+  #   [emerg] host not found in upstream "frontend:3000"
+  # whenever it starts before the frontend — and it never picks up the new address
+  # after a container is recreated. Resolving per request avoids both.
+  resolver 127.0.0.11 valid=10s ipv6=off;
+
+  map $http_upgrade $connection_upgrade { default upgrade; '' close; }
 
   server {
     listen 80;
@@ -257,21 +263,37 @@ http {
 
   server {
     listen 443 ssl;
+    http2 on;                     # nginx < 1.25.1: use `listen 443 ssl http2;`
     server_name _;
 
     ssl_certificate     /etc/nginx/ssl/fullchain.pem;
     ssl_certificate_key /etc/nginx/ssl/privkey.pem;
 
+    # Everything the browser touches, INCLUDING /api/auth/* and /api/backend/*,
+    # which are Next.js route handlers on this origin — not the FastAPI backend.
+    # Sending /api/ to the backend would break login.
     location / {
-      proxy_pass http://frontend;
+      set $frontend_upstream frontend:3000;
+      proxy_pass http://$frontend_upstream$request_uri;
+      proxy_http_version 1.1;
       proxy_set_header Host $host;
       proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade;
+      proxy_buffering off;        # the chat stream reaches the browser from here
+      proxy_read_timeout 300s;
     }
 
-    location /api/ {
-      proxy_pass http://backend;
+    # FastAPI's own prefix. Not needed by the browser — the frontend proxies
+    # server-side — but useful for curl and the OpenAPI docs.
+    location /api/v1/ {
+      set $backend_upstream backend:8000;
+      proxy_pass http://$backend_upstream$request_uri;
+      proxy_http_version 1.1;
       proxy_set_header Host $host;
       proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
       proxy_buffering off;        # required: chat streams tokens over SSE
       proxy_read_timeout 300s;
     }

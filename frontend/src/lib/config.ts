@@ -68,6 +68,21 @@ function boolFromEnv(value: string | undefined): boolean | undefined {
 function readYamlConfig(environment = envName()): RawConfig {
   const filePath = configPath();
   if (!fs.existsSync(filePath)) {
+    // `local` may legitimately run without the file: the built-in defaults are
+    // the local addresses, so falling back is correct there.
+    //
+    // `compose` and `server` cannot. Their backend is another container, and the
+    // fallback address is localhost:8000 — nothing listens on that inside the
+    // frontend container, so every server-side call dies with ECONNREFUSED and
+    // the only symptom is a 500 from /api/auth/login. Fail at startup instead,
+    // where the message names the actual cause.
+    if (environment !== "local") {
+      throw new Error(
+        `Frontend config not found at ${filePath} (RLALAB_ENV=${environment}). ` +
+          "The image must ship frontend/configs/frontend.yaml; " +
+          "set FRONTEND_CONFIG_FILE to point elsewhere.",
+      );
+    }
     return {};
   }
 
