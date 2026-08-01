@@ -40,3 +40,4 @@ pipelines/data/checkpoints/
 
 .DS_Store
 **/.DS_Store
+nginx/
