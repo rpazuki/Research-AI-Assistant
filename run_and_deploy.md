@@ -199,7 +199,38 @@ changes what the backend sends and nothing about what the server expects. See §
 
 You do **not** set `RLALAB_ENV` — `docker-compose.prod.yml` sets it to `server`.
 
-### 5.2 nginx
+### 5.2 How the app is served
+
+Two topologies. Pick one; they contend for host port 80.
+
+**Plain HTTP (the default).** `frontend` publishes host `80` → container `3000` and serves the
+app directly. nginx does not start. This is complete on its own: the browser only ever talks to
+the frontend origin, which proxies to the backend server-side under `/api/backend/*`, so no
+second hop is needed. Two settings must match it:
+
+| Where | Setting | Why |
+|---|---|---|
+| `.env` | `FRONTEND_AUTH_COOKIE_SECURE=false` | `frontend.yaml` marks the auth cookie `Secure` for `server`; a browser silently discards a `Secure` cookie over HTTP, so login succeeds and immediately bounces back to `/login` |
+| `.env.server` | `APP_PUBLIC_URL=http://<host>` | invitation emails link here |
+
+Credentials then cross the network in clear text. On a wired campus subnet that may be an
+acceptable trade for a first deployment; it is not acceptable once the tool holds real accounts.
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+curl -sS -o /dev/null -w 'HTTP %{http_code}\n' http://localhost/login      # 200
+```
+
+**TLS via nginx.** Started only by its profile, because it needs files that are not in the repo
+and would otherwise fight the frontend for port 80:
+
+```bash
+docker compose -f docker-compose.prod.yml --profile tls up -d
+```
+
+Set `FRONTEND_HOST_PORT=3000` in `.env` first to free port 80, restore
+`FRONTEND_AUTH_COOKIE_SECURE=true` (or unset it — that is the default), and put
+`APP_PUBLIC_URL` back to `https://`.
 
 `docker-compose.prod.yml` mounts `./nginx/nginx.conf` and `./nginx/ssl`. **Neither exists in
 the repo — create them or the nginx container will not start.**
