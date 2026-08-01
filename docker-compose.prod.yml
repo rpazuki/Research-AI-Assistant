@@ -27,6 +27,12 @@ services:
       - .env.server
     environment:
       RLALAB_ENV: server
+      # One owner for the password: .env. Compose interpolates ${VAR} from the
+      # shell and the project .env only — a service-level env_file: is NOT a
+      # source for it — so the URL is assembled here rather than duplicated in
+      # .env.server, where it could silently drift from POSTGRES_PASSWORD.
+      # A password containing @ : / # or ? must be percent-encoded.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       db:
         condition: service_healthy
@@ -36,7 +42,7 @@ services:
     expose:
       - "8000"
     command: >
-      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+      sh -c "python -m app.db.preflight && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
 
   ingestion-worker:
     build:
@@ -49,6 +55,7 @@ services:
       - .env.server
     environment:
       RLALAB_ENV: server
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       db:
         condition: service_healthy
@@ -57,7 +64,7 @@ services:
     volumes:
       - model_cache:/app/model_cache
       - corpus_data:/app/data
-    command: python -m app.ingestion.worker
+    command: sh -c "python -m app.db.preflight && python -m app.ingestion.worker"
 
   evaluation-worker:
     build:
@@ -70,6 +77,7 @@ services:
       - .env.server
     environment:
       RLALAB_ENV: server
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       db:
         condition: service_healthy
@@ -78,7 +86,7 @@ services:
     volumes:
       - model_cache:/app/model_cache
       - corpus_data:/app/data
-    command: python -m app.evaluation.worker
+    command: sh -c "python -m app.db.preflight && python -m app.evaluation.worker"
 
   frontend:
     build:

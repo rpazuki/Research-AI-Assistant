@@ -814,8 +814,8 @@ RETRIEVAL_FINAL_TOP_K=5
 RERANKER_ENABLED=false
 LOG_LEVEL=INFO
 
-# .env.compose — addresses only (committed)
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/rlalab_ai
+# .env.compose — addresses only (committed). No DATABASE_URL: the compose file
+# assembles it from POSTGRES_* so the password has exactly one owner.
 CORS_ORIGINS=["http://localhost:3000"]
 APP_PUBLIC_URL=http://localhost:3000
 ```
@@ -825,9 +825,15 @@ APP_PUBLIC_URL=http://localhost:3000
 - **Defaults serve `local`.** Compose always injects addresses explicitly, so it never needs a
   default; a bare shell has no injection mechanism, so the defaults must cover it. Hence
   `Settings.database_url` defaults to `localhost:5433`, never `db:5432`.
-- **Each address has exactly one owner.** Database → `Settings` (+ the address files).
-  Backend URL for the frontend → `frontend/configs/frontend.yaml`. Evaluation API URL →
-  `evaluation/configs/evaluation.yaml`. Do not restate another component's address.
+- **Each address has exactly one owner.** Database → `Settings` (+ the `DATABASE_URL` that
+  each compose file builds under `environment:`). Backend URL for the frontend →
+  `frontend/configs/frontend.yaml`. Evaluation API URL → `evaluation/configs/evaluation.yaml`.
+  Do not restate another component's address.
+- **Never write a password into `DATABASE_URL` in an address file.** The compose files build the
+  URL from `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` under `environment:`, which
+  outranks `env_file:`. A second copy drifts the moment anyone rotates the password, and the
+  whole stack then sits in a restart loop. Note also that `POSTGRES_PASSWORD` is an *initdb*
+  variable: changing it never changes an existing database — see run_and_deploy.md §7.1.
 - **The backend has no YAML config file** and must not gain one; it is env-var-only by design
   (`backend/app/core/config.py` docstring).
 - Ask `settings.is_production` / `settings.is_containerised` rather than comparing

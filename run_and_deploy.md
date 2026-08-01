@@ -188,7 +188,14 @@ In `.env` — production values:
 | `ANTHROPIC_API_KEY`, `NCBI_*`, `SENDGRID_*` | real credentials |
 
 In `.env.server` — replace the placeholder hostname in `CORS_ORIGINS` and `APP_PUBLIC_URL`
-with the real one. Leave `DATABASE_URL` as `db:5432`; that is correct inside Compose.
+with the real one. There is no `DATABASE_URL` to set: `docker-compose.prod.yml` assembles it
+from `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`, so the password has exactly one
+owner. If the password contains `@ : / # ?`, percent-encode it — asyncpg parses the URL and a
+raw `@` truncates the host.
+
+**Rotating `POSTGRES_PASSWORD` later takes two steps, not one.** The Postgres image reads that
+variable only when it initialises an empty data directory; once `pgdata` exists, editing `.env`
+changes what the backend sends and nothing about what the server expects. See §7.
 
 You do **not** set `RLALAB_ENV` — `docker-compose.prod.yml` sets it to `server`.
 
@@ -338,9 +345,54 @@ cd ../frontend && npm test -- --run && npm run type-check
 | Chat replies arrive all at once | nginx buffering | `proxy_buffering off` on `/api/` |
 | `ModuleNotFoundError: pytest`, or a torch wheel error | wrong interpreter — `.venv-1` is Python 3.13 | always `backend/.venv/bin/python` |
 | Frontend change invisible under Compose | that service runs the production image | `docker compose up -d --build frontend`, or use §4 |
-| `password authentication failed` in Compose | `POSTGRES_PASSWORD` changed after the volume was initialised; it only applies at first init | `docker compose down -v` (destroys data) or `ALTER USER` |
+| `database preflight failed: database password mismatch`, or a raw `InvalidPasswordError` in a restart loop | `POSTGRES_PASSWORD` was changed after the volume was initialised; the image reads it only at first init | rotate it on the running server — recipe below |
 | Retrieval slow after a big ingestion | IVFFlat index missing | §6 |
 | `Cache path must live under data/corpora` on the stats or acquisition page, though the folder exists | a *mixed* topology — e.g. a containerised ingestion worker (repo root `/app`) writing job rows read by a host backend (repo root the checkout) | cache paths are stored repo-relative (`data/corpora/<name>`) and re-rooted on read, so this now only means the cache is genuinely absent locally; note that with the default named volume the container's `data/` and your `./data/` are **separate copies** — run one topology, or sync them |
+
+### 7.1 Rotating the database password
+
+`POSTGRES_PASSWORD` is an *initdb* variable. The Postgres image reads it exactly once, when it
+initialises an empty data directory. From then on the role's password lives in `pgdata`, and
+editing `.env` changes only what the backend presents — so the two drift apart, every container
+that talks to the database exits, and `restart: unless-stopped` turns that into a loop. While a
+container is restarting, `docker compose exec` refuses to attach, which is why `create_user.py`
+reports *"is restarting, wait until the container is running"*.
+
+Every service now runs `python -m app.db.preflight` before its real command, so the log says
+`database password mismatch` and names the fix instead of printing an asyncpg traceback.
+
+Rotate in two steps. `exec db psql` connects over the unix socket, which the image configures as
+`trust`, so this works even when nothing can authenticate over TCP:
+
+```bash
+docker compose -f docker-compose.prod.yml stop backend ingestion-worker evaluation-worker
+docker compose -f docker-compose.prod.yml exec db psql -U postgres
+```
+
+At the prompt — interactive, so the secret stays out of shell history and the statement log:
+
+```
+\password postgres
+\q
+```
+
+Then set the same value as `POSTGRES_PASSWORD` in `.env` and bring the stack back:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml logs -f backend
+```
+
+`docker compose down -v` also works, by discarding `pgdata` and re-running initdb. It **destroys
+every user, document, chunk and embedding**; it is only reasonable on a deployment with nothing
+in it yet.
+
+To run a one-off command while the backend is still crash-looping, use `run` rather than `exec` —
+it starts a fresh container and ignores the failing `command`:
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm backend python scripts/create_user.py
+```
 
 ---
 

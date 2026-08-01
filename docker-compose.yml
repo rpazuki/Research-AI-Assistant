@@ -31,6 +31,12 @@ services:
       - .env.compose
     environment:
       RLALAB_ENV: compose
+      # One owner for the password: .env. Compose interpolates ${VAR} from the
+      # shell and the project .env only — a service-level env_file: is NOT a
+      # source for it — so the URL is assembled here rather than duplicated in
+      # .env.compose, where it could silently drift from POSTGRES_PASSWORD.
+      # A password containing @ : / # or ? must be percent-encoded.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     ports:
       - "8000:8000"
     depends_on:
@@ -40,7 +46,7 @@ services:
       - model_cache:/app/model_cache   # Persistent volume for embedding model weights
       - corpus_data:/app/data           # Corpus caches, uploads, and ingestion artifacts
     command: >
-      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      sh -c "python -m app.db.preflight && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   ingestion-worker:
     build:
@@ -52,6 +58,7 @@ services:
       - .env.compose
     environment:
       RLALAB_ENV: compose
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       db:
         condition: service_healthy
@@ -60,7 +67,7 @@ services:
     volumes:
       - model_cache:/app/model_cache
       - corpus_data:/app/data
-    command: python -m app.ingestion.worker
+    command: sh -c "python -m app.db.preflight && python -m app.ingestion.worker"
 
   evaluation-worker:
     build:
@@ -72,6 +79,7 @@ services:
       - .env.compose
     environment:
       RLALAB_ENV: compose
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       db:
         condition: service_healthy
@@ -80,7 +88,7 @@ services:
     volumes:
       - model_cache:/app/model_cache
       - corpus_data:/app/data
-    command: python -m app.evaluation.worker
+    command: sh -c "python -m app.db.preflight && python -m app.evaluation.worker"
 
   # ── Next.js frontend ──────────────────────────────────────────────────────
   frontend:
