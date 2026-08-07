@@ -13,7 +13,7 @@ source          = "datasheet_manifest"
 embedding_model = "pubmedbert"
 
 [datasheet]
-run_dir = "./data/corpora/datasheets/CHANGE-ME"
+run_dir = "./data/corpora/datasheets/manifest"
 
 # Fetch PMC full text where a PMCID exists. When a PMC fetch fails (the OA subset
 # is smaller than the set of deposited articles) the pipeline falls back to the
