@@ -478,6 +478,7 @@ def _build_run_summary(run: DatasheetRun) -> DatasheetRunSummary:
         candidate_count=run.candidate_count,
         progress_message=run.progress_message,
         error=run.error,
+        cache_path=run.cache_path,
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,

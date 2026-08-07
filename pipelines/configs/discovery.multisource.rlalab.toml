@@ -1,0 +1,56 @@
+# RLALab corpus configuration — multi-source discovery search.
+#
+# Searches PubMed, Europe PMC, Crossref and OpenAlex in one pass and indexes the
+# candidates that survive canonicalisation, preprint collapse and the relevance
+# rules. Use this instead of abstract.pubmed.*.toml when coverage matters more
+# than a hand-tuned PubMed expression: a measured run found 97% of the papers
+# PubMed does not index (docs/DATASHEET_FEATURE_PLAN.md §8).
+#
+# Commit this file; contact addresses (NCBI_EMAIL, CROSSREF_MAILTO,
+# OPENALEX_MAILTO) stay in .env.
+
+[corpus]
+name            = "rlalab-discovery-v1"
+source          = "discovery_search"
+embedding_model = "pubmedbert"
+
+[discovery]
+# Organism and product terms play different roles and are kept apart on purpose:
+# a candidate must match an organism term to be relevant at all, while a product
+# term only promotes an already-relevant paper. Flattening them into one list
+# changes what the relevance verdict means.
+organism_terms = [
+  "Yarrowia lipolytica",
+  "Yarrowia",
+]
+product_terms = [
+  "lipid",
+  "single cell oil",
+  "citric acid",
+  "carotenoid",
+  "erythritol",
+  "single cell protein",
+]
+
+year_from = 2016
+year_to   = 2026
+
+sources                = ["pubmed", "europepmc", "crossref", "openalex"]
+max_records_per_source = 5000
+
+# `mentions` are papers where a seed term appears outside the title/abstract
+# focus; reviews are excluded from the corpus but stay in the audit CSV.
+include_mentions           = false
+include_reviews            = false
+collapse_preprint_versions = true
+
+# Off by default: one extra PubMed search per included DOI. Turn on for a
+# corpus build that will be cited without further review.
+check_retraction_notices = false
+
+[chunking]
+chunk_size    = 512    # words (approximate tokens)
+chunk_overlap = 64     # words
+
+# Shared runtime defaults such as HTTP attempts, deduplication and progress
+# cadence live in pipelines/configs/pipeline.defaults.yaml.

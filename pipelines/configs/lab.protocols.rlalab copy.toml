@@ -1,8 +1,0 @@
-[corpus]
-source = "lab_protocols"
-
-[lab_protocols]
-dir = "./data/lab_protocols"
-access_status = "internal"
-sensitivity = "internal"
-owner = "RLA Lab"

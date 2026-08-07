@@ -25,7 +25,6 @@ Three properties matter more than throughput:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import sys
@@ -46,6 +45,12 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from pipelines.acquisition import extract_text  # noqa: E402
+from pipelines.acquisition.cache_layout import (  # noqa: E402
+    ASSET_DIR_NAME,
+    TEXT_DIR_NAME,
+    cache_paths,
+    safe_stem,
+)
 from pipelines.acquisition.ladder import (  # noqa: E402
     DEFAULT_LADDER,
     STATUS_ASSISTED,
@@ -59,19 +64,9 @@ from pipelines.acquisition.ratelimit import RateLimiter  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-ASSET_DIR_NAME = "assets"
-TEXT_DIR_NAME = "fulltext"
-
-
-def _safe_stem(identifier: str) -> str:
-    """A filesystem-safe, collision-free name for a DOI.
-
-    DOIs contain slashes and arbitrary punctuation; a hash suffix keeps two DOIs
-    that sanitise to the same string apart.
-    """
-    cleaned = "".join(char if char.isalnum() or char in "-._" else "_" for char in identifier)
-    digest = hashlib.sha256(identifier.encode("utf-8")).hexdigest()[:10]
-    return f"{cleaned[:80]}-{digest}"
+# The layout itself lives in pipelines/acquisition/cache_layout.py: ingestion
+# reads these files back to index a finished run and must derive the same stems.
+_safe_stem = safe_stem
 
 
 @dataclass
@@ -125,12 +120,6 @@ def build_limiter(run_config: dict) -> RateLimiter:
         max_requests_per_host=int(acquisition.get("max_requests_per_host_per_run", 400)),
         respect_robots=bool(acquisition.get("respect_robots", True)),
     )
-
-
-def cache_paths(cache_root: Path, doi_or_id: str) -> tuple[Path, Path]:
-    """Where an asset and its extracted text live for this run."""
-    stem = _safe_stem(doi_or_id)
-    return (cache_root / ASSET_DIR_NAME / stem, cache_root / TEXT_DIR_NAME / f"{stem}.json")
 
 
 def load_cached_asset(cache_root: Path, target: AcquisitionTarget) -> tuple[bytes, str, str] | None:

@@ -329,22 +329,77 @@ published database port and no nginx.
 ### 5.4 Update
 
 ```bash
+cd /opt/rlalab
+scripts/deploy.sh
+```
+
+`scripts/deploy.sh` is the supported way to move the deployment forward. It
+fast-forwards from GitHub (`--ff-only`, so a diverged checkout stops rather than
+being merged behind your back), maps the changed paths to services — `backend/**`
+and `pipelines/**` to the backend and both workers, `frontend/**` to the
+frontend, compose or `.env.server` to everything — rebuilds and recreates only
+those, waits for each to answer, and rolls the checkout back if it does not.
+Every attempt appends a line to `ops/deploy.log`.
+
+```bash
+scripts/deploy.sh --dry-run      # what would move
+scripts/deploy.sh -s frontend    # one service
+scripts/deploy.sh -y             # unattended
+```
+
+The manual equivalent still works and is what the script runs underneath:
+
+```bash
 git pull
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Compose recreates only changed services. Migrations apply on backend start.
+Compose recreates only changed services. Migrations apply on backend start —
+**neither the script nor the manual path reverses a migration**, so a rollback
+leaves the schema ahead of the code if one had already run.
+
+See [scripts/README.md](scripts/README.md) for the rest of the flags and for
+`scripts/restart.sh` (bouncing a service without touching git — use
+`--recreate` after editing `.env`, since a plain restart keeps the environment
+the container was created with).
 
 ---
 
 ## 6. Operations
 
+**Status**
+
+```bash
+scripts/status.sh          # deployed commit, container states, health, resources
+```
+
 **Logs**
 
 ```bash
+scripts/logs.sh -f                     # all containers, merged, timestamped
+scripts/logs.sh -f backend --errors    # errors, tracebacks and HTTP 5xx only
+scripts/logs.sh -f --redact            # safe to screen-share
+
 docker compose logs -f backend                    # add -f <file> on the server
 docker compose logs --tail 200 ingestion-worker
 ```
+
+**When a lab member reports a problem** — produce one redacted archive holding
+every container's log over the window, merged into a single timeline, plus the
+deployed commit, container states, resources and database counters:
+
+```bash
+scripts/collect-logs.sh --since 6h --note "chat 500s for <user>, ~09:40 UTC"
+# → ops/rlalab-support-<host>-<UTC>.tar.gz     send this one file
+```
+
+Secrets are removed and the archive is verified secret-free before it is
+written; chat content and document text are never included. Design and
+retention notes: [docs/operations-logging.md](docs/operations-logging.md).
+
+Log rotation is set in `docker-compose.prod.yml` (`x-logging`: 20 MB × 5 per
+service). It applies from the next container recreation, so after first pulling
+it: `scripts/deploy.sh --all --force`.
 
 **Database shell**
 

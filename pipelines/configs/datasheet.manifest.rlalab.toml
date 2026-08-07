@@ -1,0 +1,38 @@
+# RLALab corpus configuration — a datasheet run's manifest as an ingestion worklist.
+#
+# Indexes the papers a finished datasheet run judged relevant: PMCIDs are fetched
+# as full text, everything else as a PubMed abstract. Nothing is re-searched, and
+# the run's inclusion decisions are respected as-is.
+#
+# run_dir is the run's cache directory, shown on the admin run page. The manifest
+# is written there at the end of the discovery phase.
+
+[corpus]
+name            = "rlalab-datasheet-manifest-v1"
+source          = "datasheet_manifest"
+embedding_model = "pubmedbert"
+
+[datasheet]
+run_dir = "./data/corpora/datasheets/CHANGE-ME"
+
+# Fetch PMC full text where a PMCID exists. When a PMC fetch fails (the OA subset
+# is smaller than the set of deposited articles) the pipeline falls back to the
+# abstract rather than dropping the paper.
+fetch_fulltext = true
+
+# Manifest rows with neither PMID nor PMCID have a title and no abstract, so they
+# would enter the corpus as title-only records. Skipped by default; the count of
+# skipped rows is logged.
+skip_metadata_only = true
+
+# 'studies' keeps only papers whose seed terms are the subject; 'mentions' also
+# admits papers where a term appears peripherally.
+min_relevance   = "studies"
+include_reviews = false
+
+[chunking]
+chunk_size    = 512
+chunk_overlap = 64
+
+# Shared defaults live in pipelines/configs/pipeline.defaults.yaml.
+# NCBI_EMAIL and NCBI_API_KEY come from .env.

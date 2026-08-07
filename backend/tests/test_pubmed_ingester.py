@@ -79,6 +79,40 @@ def test_cached_pubmed_batches_are_keyed_by_pmid_list(tmp_path) -> None:
     assert calls == [["1"], ["2"]]
 
 
+def test_explicit_pmids_skip_the_search_entirely() -> None:
+    """The datasheet manifest already knows which papers it wants; running an
+    ESearch to rediscover them would be both slower and a different result set."""
+    ingester = PubMedAbstractIngester(
+        query="",
+        year_from=0,
+        year_to=0,
+        email="test@example.com",
+        api_key="dummy",
+        pmids=["111", "222"],
+    )
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("ESearch must not run when PMIDs were supplied")
+
+    ingester._safe_esearch = explode  # type: ignore[method-assign]
+
+    assert ingester._collect_pmids() == ["111", "222"]
+
+
+def test_without_explicit_pmids_the_year_search_still_runs() -> None:
+    ingester = make_ingester()
+    calls: list[str] = []
+
+    def fake_esearch(term: str, retstart: int = 0, retmax: int = 1) -> dict:
+        calls.append(term)
+        return {"Count": "0"}
+
+    ingester._safe_esearch = fake_esearch  # type: ignore[method-assign]
+    ingester._collect_pmids()
+
+    assert len(calls) == 3  # 2024, 2025, 2026
+
+
 def test_from_config_uses_pipeline_defaults(monkeypatch, tmp_path) -> None:
     defaults_path = tmp_path / "pipeline.defaults.yaml"
     checkpoint_dir = tmp_path / "checkpoints"

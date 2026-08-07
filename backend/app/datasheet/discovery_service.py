@@ -35,6 +35,7 @@ _REPO_ROOT = _BACKEND_DIR if (_BACKEND_DIR / "pipelines").exists() else _BACKEND
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from pipelines.acquisition.cache_layout import manifest_csv_path  # noqa: E402
 from pipelines.discovery.canonicalize import Candidate  # noqa: E402
 from pipelines.discovery.discover import (  # noqa: E402
     ALL_SOURCES,
@@ -335,6 +336,34 @@ async def manifest_csv_for_run(db: AsyncSession, run_id: uuid.UUID) -> str:
     return write_manifest_csv(candidates, included_dois=included)
 
 
+def write_manifest_to_cache(
+    run: DatasheetRun,
+    candidates: list[Candidate],
+    *,
+    included_dois: set[str],
+) -> Path | None:
+    """Drop the manifest into the run's cache directory.
+
+    Without it the directory is unreadable from outside this process: `safe_stem`
+    is one-way, so `assets/<stem>.pdf` and `fulltext/<stem>.json` cannot be traced
+    back to a DOI. Writing the CSV here is what lets the ingestion pipeline index
+    a finished run with no database access and no manual download.
+
+    Failure is logged, never raised: a run that found 4,000 papers must not be
+    marked failed because a directory was read-only.
+    """
+    try:
+        path = manifest_csv_path(resolve_run_cache_root(run))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            write_manifest_csv(candidates, included_dois=included_dois), encoding="utf-8"
+        )
+        return path
+    except OSError as exc:
+        logger.warning("could not write discovery manifest for run %s: %s", run.id, exc)
+        return None
+
+
 def resolve_run_cache_root(run: DatasheetRun) -> Path:
     """The run's corpus cache directory, created on first use.
 
@@ -437,6 +466,7 @@ async def run_discovery_phase(
     written = await replace_candidates(
         db, run.id, result.candidates, included_dois=included_dois
     )
+    write_manifest_to_cache(run, result.candidates, included_dois=included_dois)
 
     summary = result.summary()
     run.candidate_count = written

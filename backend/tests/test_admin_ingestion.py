@@ -361,6 +361,124 @@ def test_empty_cache_paths_stay_empty() -> None:
     assert store_cache_path(None) is None
 
 
+def test_every_committed_config_source_is_supported() -> None:
+    """A committed config whose source the API rejects is a config nobody can
+    run from the admin UI."""
+    from app.ingestion.admin_service import SUPPORTED_SOURCES
+
+    sources = {config["source"] for config in list_approved_configs()}
+
+    assert sources <= SUPPORTED_SOURCES
+    assert sources >= {
+        "pubmed_abstract",
+        "pdf",
+        "discovery_search",
+        "datasheet_manifest",
+        "datasheet_fulltext",
+        "datasheet_rows",
+    }
+
+
+def test_every_committed_config_passes_its_own_validation() -> None:
+    """Each shipped config is what the editor loads and re-saves; if validation
+    rejects it, editing an untouched config fails with a 400."""
+    from app.ingestion.admin_service import load_toml, validate_ingestion_config_content
+
+    for config in list_approved_configs():
+        validate_ingestion_config_content(load_toml(Path(config["path"])))
+
+
+def test_discovery_config_requires_organism_terms() -> None:
+    from app.ingestion.admin_service import validate_ingestion_config_content
+
+    with pytest.raises(HTTPException) as excinfo:
+        validate_ingestion_config_content(
+            {
+                "corpus": {"name": "c", "source": "discovery_search"},
+                "discovery": {"product_terms": ["citric acid"]},
+            }
+        )
+
+    assert excinfo.value.status_code == 400
+    assert "Organism terms" in excinfo.value.detail
+
+
+def test_discovery_config_rejects_an_unknown_source_name() -> None:
+    from app.ingestion.admin_service import validate_ingestion_config_content
+
+    with pytest.raises(HTTPException) as excinfo:
+        validate_ingestion_config_content(
+            {
+                "corpus": {"name": "c", "source": "discovery_search"},
+                "discovery": {"organism_terms": ["Yarrowia"], "sources": ["pubmed", "scopus"]},
+            }
+        )
+
+    assert "scopus" in excinfo.value.detail
+
+
+def test_datasheet_config_needs_a_run_directory_or_a_manifest_path() -> None:
+    from app.ingestion.admin_service import validate_ingestion_config_content
+
+    with pytest.raises(HTTPException) as excinfo:
+        validate_ingestion_config_content(
+            {"corpus": {"name": "c", "source": "datasheet_fulltext"}, "datasheet": {}}
+        )
+
+    assert "run directory" in excinfo.value.detail
+
+    accepted = validate_ingestion_config_content(
+        {
+            "corpus": {"name": "c", "source": "datasheet_fulltext"},
+            "datasheet": {"manifest_csv": "data/corpora/datasheets/x/discovery/manifest.csv"},
+        }
+    )
+    assert accepted["datasheet"]["manifest_csv"].endswith("manifest.csv")
+
+
+def test_datasheet_config_rejects_an_unknown_relevance_floor() -> None:
+    from app.ingestion.admin_service import validate_ingestion_config_content
+
+    with pytest.raises(HTTPException) as excinfo:
+        validate_ingestion_config_content(
+            {
+                "corpus": {"name": "c", "source": "datasheet_manifest"},
+                "datasheet": {"run_dir": "data/corpora/datasheets/x", "min_relevance": "maybe"},
+            }
+        )
+
+    assert "studies" in excinfo.value.detail
+
+
+def test_datasheet_rows_config_requires_the_csv_path() -> None:
+    from app.ingestion.admin_service import validate_ingestion_config_content
+
+    with pytest.raises(HTTPException) as excinfo:
+        validate_ingestion_config_content(
+            {"corpus": {"name": "c", "source": "datasheet_rows"}, "datasheet": {}}
+        )
+
+    assert "Datasheet rows file" in excinfo.value.detail
+
+
+def test_dump_toml_sections_orders_the_new_source_sections() -> None:
+    # The editor's writer (admin_service), not the worker's — only the former
+    # imposes a section order, and that is what a saved config looks like.
+    from app.ingestion.admin_service import dump_toml_sections as dump_ordered_sections
+
+    text = dump_ordered_sections(
+        {
+            "chunking": {"chunk_size": 512},
+            "datasheet": {"run_dir": "data/corpora/datasheets/x"},
+            "discovery": {"organism_terms": ["Yarrowia"]},
+            "corpus": {"name": "c", "source": "discovery_search"},
+        }
+    )
+
+    assert text.index("[corpus]") < text.index("[discovery]") < text.index("[datasheet]")
+    assert text.index("[datasheet]") < text.index("[chunking]")
+
+
 def test_dump_toml_sections_preserves_known_config_shape() -> None:
     text = dump_toml_sections(
         {

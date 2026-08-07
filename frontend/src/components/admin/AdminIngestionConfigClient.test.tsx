@@ -8,6 +8,7 @@ const listIngestionConfigs = vi.fn();
 const getIngestionConfig = vi.fn();
 const createIngestionConfig = vi.fn();
 const updateIngestionConfig = vi.fn();
+const listDatasheetRuns = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh: vi.fn() }),
@@ -20,17 +21,40 @@ vi.mock("@/lib/api", () => ({
   getIngestionConfig: (...args: unknown[]) => getIngestionConfig(...args),
   createIngestionConfig: (...args: unknown[]) => createIngestionConfig(...args),
   updateIngestionConfig: (...args: unknown[]) => updateIngestionConfig(...args),
+  listDatasheetRuns: (...args: unknown[]) => listDatasheetRuns(...args),
 }));
 
 // A realistically long filename: this is what made the select set a width floor
 // the panel could not shrink below.
 const LONG_NAME = "corpus.rlalab-yarrowia-lipolytica-fulltext-2016-2026.toml";
 
+const DATASHEET_RUN = {
+  id: "11111111-1111-1111-1111-111111111111",
+  name: "yarrowia-2016-2026",
+  status: "succeeded",
+  phase: "ingestion",
+  seed_kind: "organism",
+  organism_name: "Yarrowia lipolytica",
+  organism_taxid: 4952,
+  product_term: null,
+  year_from: 2016,
+  year_to: 2026,
+  candidate_count: 3426,
+  progress_message: null,
+  error: null,
+  cache_path: "data/corpora/datasheets/yarrowia-2016-2026-11111111",
+  created_at: "2026-08-01T10:00:00Z",
+  started_at: "2026-08-01T10:00:00Z",
+  finished_at: "2026-08-01T11:00:00Z",
+};
+
 describe("AdminIngestionConfigClient", () => {
   beforeEach(() => {
     push.mockReset();
     listIngestionConfigs.mockReset();
     getIngestionConfig.mockReset();
+    listDatasheetRuns.mockReset();
+    listDatasheetRuns.mockResolvedValue([DATASHEET_RUN]);
     listIngestionConfigs.mockResolvedValue([
       { name: LONG_NAME, source: "pubmed_abstract", path: `pipelines/configs/${LONG_NAME}` },
       { name: "corpus.rlalab.toml", source: "pubmed_abstract", path: "pipelines/configs/corpus.rlalab.toml" },
@@ -131,5 +155,79 @@ describe("AdminIngestionConfigClient", () => {
     expect(select.className).toContain("w-full");
     expect(select.className).toContain("min-w-0");
     expect(select.closest("label")?.className).toContain("min-w-0");
+  });
+
+  it("offers the discovery and datasheet sources", async () => {
+    render(<AdminIngestionConfigClient />);
+
+    const sourceSelect = (await screen.findByText("Source type")).closest("label")
+      ?.querySelector("select") as HTMLSelectElement;
+    const values = Array.from(sourceSelect.options).map((option) => option.value);
+
+    expect(values).toEqual(
+      expect.arrayContaining([
+        "discovery_search",
+        "datasheet_manifest",
+        "datasheet_fulltext",
+        "datasheet_rows",
+      ])
+    );
+  });
+
+  it("shows discovery search terms when the discovery source is selected", async () => {
+    render(<AdminIngestionConfigClient />);
+
+    const sourceSelect = (await screen.findByText("Source type")).closest("label")
+      ?.querySelector("select") as HTMLSelectElement;
+    fireEvent.change(sourceSelect, { target: { value: "discovery_search" } });
+
+    expect(await screen.findByText("Organism terms")).toBeInTheDocument();
+    expect(screen.getByText("Product terms")).toBeInTheDocument();
+    expect(screen.queryByText("PubMed query")).not.toBeInTheDocument();
+  });
+
+  it("lets a datasheet run be picked instead of typing its cache path", async () => {
+    // The last path segment is a UUID fragment; typing it by hand is the obvious
+    // way for this to go wrong.
+    render(<AdminIngestionConfigClient />);
+
+    const sourceSelect = (await screen.findByText("Source type")).closest("label")
+      ?.querySelector("select") as HTMLSelectElement;
+    fireEvent.change(sourceSelect, { target: { value: "datasheet_fulltext" } });
+
+    const runSelect = (await screen.findByText("Datasheet run")).closest("label")
+      ?.querySelector("select") as HTMLSelectElement;
+    await waitFor(() =>
+      expect(Array.from(runSelect.options).map((option) => option.value)).toContain(
+        DATASHEET_RUN.cache_path
+      )
+    );
+    expect(runSelect.options[1].textContent).toContain("3426 candidates");
+
+    fireEvent.change(runSelect, { target: { value: DATASHEET_RUN.cache_path } });
+    expect(runSelect.value).toBe(DATASHEET_RUN.cache_path);
+  });
+
+  it("falls back to a text field when no datasheet runs can be listed", async () => {
+    // A failed listing must not make a required field unfillable: a path typed
+    // by hand is still valid.
+    listDatasheetRuns.mockRejectedValue(new Error("unavailable"));
+    render(<AdminIngestionConfigClient />);
+
+    const sourceSelect = (await screen.findByText("Source type")).closest("label")
+      ?.querySelector("select") as HTMLSelectElement;
+    fireEvent.change(sourceSelect, { target: { value: "datasheet_manifest" } });
+
+    const label = (await screen.findByText("Datasheet run")).closest("label") as HTMLElement;
+    await waitFor(() => expect(label.querySelector("select")).toBeNull());
+    const input = label.querySelector("input") as HTMLInputElement;
+    expect(input.placeholder).toBe("data/corpora/datasheets/<run>");
+  });
+
+  it("does not list datasheet runs for a source that has no use for them", async () => {
+    render(<AdminIngestionConfigClient />);
+    await screen.findByText("Source type");
+
+    expect(listDatasheetRuns).not.toHaveBeenCalled();
   });
 });

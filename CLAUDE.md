@@ -144,6 +144,10 @@ RLALab-AI-Assistant/
 │   │   ├── base.py                  ← Abstract Ingester interface
 │   │   ├── pubmed_abstract.py       ← PubMed abstract fetcher (extends GutFeeling approach)
 │   │   ├── pmc_fulltext.py          ← PubMed Central full-text fetcher (OA subset)
+│   │   ├── discovery_search.py      ← Multi-source search via pipelines/discovery (pubmed+epmc+crossref+openalex)
+│   │   ├── datasheet_manifest.py    ← A datasheet run's manifest CSV as an ingestion worklist
+│   │   ├── datasheet_fulltext.py    ← Full text a datasheet run already fetched (section-labelled, no network)
+│   │   ├── datasheet_rows.py        ← Curated datasheet rows, one document per row
 │   │   └── pdf_local.py             ← Local PDF ingester (for lab preprints / reports)
 │   ├── processing/
 │   │   ├── normalizer.py            ← Unified document schema normalization
@@ -163,11 +167,23 @@ RLALab-AI-Assistant/
 │   ├── run_eval.py                  ← Evaluation runner (queries backend API)
 │   └── reports/                     ← Evaluation run outputs (gitignored large files)
 │
+├── scripts/                         ← Production operations (deployment VM)
+│   ├── README.md                    ← Flag reference and recipes
+│   ├── deploy.sh                    ← Pull from GitHub, rebuild only changed services, verify, roll back
+│   ├── restart.sh                   ← Bounce/recreate services without touching git
+│   ├── status.sh                    ← Deployed commit, container states, health, resources
+│   ├── logs.sh                      ← Live unified log view across containers
+│   ├── collect-logs.sh              ← Redacted support bundle (.tar.gz) for a bug report
+│   └── lib/
+│       ├── common.sh                ← compose wrapper, .env reader, health checks, path→service map
+│       └── redact.sh                ← Secret removal + pre-handover verification
+│
 └── docs/
     ├── architecture.md              ← Abstract system layers, flows, and runtime boundaries
     ├── components.md                ← Concrete component inventory: files, routes, pages, services
     ├── evaluation-guidelines.md     ← Full evaluation methodology (auto-generated, see §10)
     ├── ingestion-guide.md           ← How to run and update corpus
+    ├── operations-logging.md        ← Unified logging design, support bundles, redaction rules
     └── api-reference.md             ← FastAPI auto-docs supplement
 ```
 
@@ -890,6 +906,17 @@ Implementation notes for agents:
 
 ## 16. Deployment
 
+**Operating the VM goes through `scripts/`** — `deploy.sh` (fast-forward from
+GitHub, rebuild only the services whose paths changed, verify health, roll back
+on failure), `restart.sh`, `status.sh`, `logs.sh`, `collect-logs.sh`. Details in
+`scripts/README.md`; deployment context in `run_and_deploy.md` §5–6; logging and
+support-bundle design in `docs/operations-logging.md`.
+
+Container logs are rotated by the `x-logging` anchor in `docker-compose.prod.yml`
+(20 MB × 5 per service). Do not remove it: Docker's default `json-file` driver
+never rotates, and an unbounded backend log fills the VM disk and takes Postgres
+with it.
+
 ### Docker Compose (production)
 
 ```yaml
@@ -987,7 +1014,10 @@ Read `docs/evaluation-guidelines.md` before starting frontend polish — evaluat
 | `tests/test_resilience.py` | `_is_llm_retryable`, `pubmed_retry`, `llm_retry` |
 | `tests/test_e2e.py` | Auth (login/logout/me/inactive), session CRUD, feedback, search, admin gate |
 | `tests/test_api_integration.py` | Full SSE streaming, auto-title, analytics, search |
-| `tests/test_build_index.py` | Embedding dimension validation |
+| `tests/test_build_index.py` | Embedding dimension validation, chunk-mode map, cache replay per source |
+| `tests/test_discovery_search_ingester.py` | Candidate → document mapping, audit artifacts, `from_config` |
+| `tests/test_datasheet_ingesters.py` | Manifest parsing/selection, PMC→abstract fallback, section-labelled full text, row documents |
+| `tests/test_chunker.py` | Chunk splitting, overlap, section labels |
 | `tests/test_eval_runner.py` | SSE stream parser |
 | `tests/test_pmc_fulltext.py` | PMC XML metadata/text extraction |
 | `tests/test_pubmed_ingester.py` | PubMed query builder, incremental checkpoint |

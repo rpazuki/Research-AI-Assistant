@@ -346,3 +346,31 @@ contract (the same set that has published quotas) are exempt.
   tell them apart. Instrument before the first live run, not after.
 - A live run against real upstreams found this immediately; 42 offline tests did not, because the
   mock transport had no robots.txt to disallow.
+
+---
+
+## A dedupe rule inherits an assumption the new source breaks
+
+**Incident:** the `datasheet_rows` ingester makes one document per datasheet row, because a row is
+what a researcher asks about and each row cites its own paper. Its first real indexing run reported
+`datasheet rows: 2 of 2 rows indexed` and then `Indexing complete: 1 documents`. The deduplicator
+had dropped the second row: two rows about one paper share that paper's PMID and its title, and the
+default rules match on both.
+
+**Root cause:** the deduplicator was written when every document *was* a paper, so "same PMID" and
+"same title" meant "same document". A row-scoped source violates that silently — nothing raised,
+and the ingester's own count said 2.
+
+**Fix:** `ROW_SCOPED_SOURCES` in `build_index.py`; those sources dedupe on `document_id` only (the
+row hash), which still catches an accidental re-read.
+
+**Prevention:**
+- When adding a source whose document is *about* a paper rather than *being* one, re-read every
+  rule keyed on `pmid` / `title` / `doi`. Identity assumptions live far from the new code.
+- Compare the ingester's own count with the indexer's count. `2 of 2 rows indexed` next to
+  `1 documents` is the whole bug, visible in two adjacent log lines — but only if a real run is
+  performed. 597 unit tests passed with the defect present.
+- The unit suite never touches Postgres, so the SQL and the pipeline wiring are both untested by it.
+  A scratch database (`CREATE DATABASE`, `alembic upgrade head`, run, drop) is cheap and catches
+  the whole class: this same pass verified the COALESCE upsert clause, `section_label` reaching
+  `document_chunks`, and that a `--local-only` replay does not duplicate documents.

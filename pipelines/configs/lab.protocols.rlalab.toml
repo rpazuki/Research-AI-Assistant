@@ -1,0 +1,12 @@
+# RLALab corpus configuration — internal lab protocols (Markdown/text exports).
+
+[corpus]
+name            = "rlalab-lab-protocols-v1"
+source          = "lab_protocols"
+embedding_model = "pubmedbert"
+
+[lab_protocols]
+dir = "./data/lab_protocols"
+access_status = "internal"
+sensitivity = "internal"
+owner = "RLA Lab"

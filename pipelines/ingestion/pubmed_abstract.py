@@ -57,8 +57,13 @@ class PubMedAbstractIngester(BaseIngester):
         retry_backoff_base_s: float = 1.0,
         incremental_from: date | None = None,
         cache: CorpusCache | None = None,
+        pmids: list[str] | None = None,
     ) -> None:
         self.query = query
+        # A caller that already knows which papers it wants — a datasheet run's
+        # manifest, say — supplies the PMIDs and skips ESearch entirely. The
+        # efetch, parse, cache and asset-provenance path below is unchanged.
+        self.pmids = list(pmids) if pmids is not None else None
         self.year_from = year_from
         self.year_to = year_to
         self.batch_size = batch_size
@@ -166,7 +171,14 @@ class PubMedAbstractIngester(BaseIngester):
         When a year has more than _PUBMED_MAX_RETSTART results (PubMed's hard
         pagination cap), it is automatically split into monthly sub-queries so
         that no single ESearch call exceeds the limit.
+
+        When the caller supplied an explicit PMID list, that list *is* the
+        result: no search, no year loop, no checkpoints to resume.
         """
+        if self.pmids is not None:
+            logger.info(f"Using {len(self.pmids)} caller-supplied PMIDs")
+            return list(self.pmids)
+
         all_pmids: list[str] = []
         for year in range(self.year_from, self.year_to + 1):
             if self.incremental_from and year < self.incremental_from.year:

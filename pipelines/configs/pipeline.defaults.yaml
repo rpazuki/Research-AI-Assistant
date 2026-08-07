@@ -25,6 +25,36 @@ defaults:
       retry_backoff_base_s: 2.0
       retry_backoff_max_s: 30.0
 
+  discovery:
+    sources:
+      - "pubmed"
+      - "europepmc"
+      - "crossref"
+      - "openalex"
+    max_records_per_source: 5000
+    include_mentions: false
+    include_reviews: false
+    collapse_preprint_versions: true
+    check_retraction_notices: false
+    http:
+      attempts: 3
+      timeout_s: 30
+    # Contact addresses are not set here. They are secrets-file material
+    # (CROSSREF_MAILTO / OPENALEX_MAILTO in .env), and both fall back to
+    # NCBI_EMAIL, which is the address guaranteed to be configured.
+
+  datasheet:
+    # Shared defaults for the three datasheet_* sources, the way `local:`
+    # serves the four lab sources.
+    fetch_fulltext: true
+    skip_metadata_only: true
+    min_relevance: "studies"
+    include_reviews: false
+    chunk_by_section: true
+    access_status: "internal"
+    sensitivity: "internal"
+    retention_policy: "internal-project-storage"
+
   pdf:
     dir: "./data/pdfs"
 

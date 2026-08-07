@@ -31,6 +31,10 @@ PARSER_VERSIONS = {
     "pdf": "pdf-v1",
     "local_text": "local-text-v1",
     "local_table": "local-table-v1",
+    "discovery": "discovery-v1",
+    "datasheet_manifest": "datasheet-manifest-v1",
+    "datasheet_fulltext": "datasheet-fulltext-v1",
+    "datasheet_rows": "datasheet-rows-v1",
 }
 ACCESS_STATUSES = {
     "metadata-only",
@@ -218,6 +222,9 @@ class CorpusCache:
             "raw/licensed/originals",
             "raw/lab/originals",
             "raw/lab/extracted",
+            "raw/discovery",
+            "raw/datasheet/fulltext",
+            "raw/datasheet/rows",
             "normalized",
             "chunks",
             "assets",
@@ -312,6 +319,11 @@ class CorpusCache:
             + len(list((self.root / "raw/pmc/xml").glob("*.xml")))
             + len(list((self.root / "raw/pdf/extracted").glob("*.txt")))
             + len(list((self.root / "raw/lab/extracted").glob("*.txt")))
+            + len(list((self.root / "raw/datasheet/fulltext").glob("*.json")))
+            # Discovery and datasheet rows arrive as records inside one file, so
+            # counting files would report 1 for a run of several thousand.
+            + self.count_jsonl("raw/discovery/candidates.jsonl")
+            + self.count_jsonl("raw/datasheet/rows/rows.jsonl")
         )
         self.manifest.counts.update(
             {
@@ -479,6 +491,9 @@ def document_to_cache_record(
         "sensitivity": doc.metadata.get("sensitivity"),
         "retention_policy": doc.metadata.get("retention_policy"),
         "owner": doc.metadata.get("owner"),
+        # Kept out of `metadata` on purpose: it would duplicate the whole body
+        # into documents.metadata in Postgres. The cache is the only consumer.
+        "sections": list(doc.sections),
     }
     canonical = json.dumps(record, sort_keys=True, default=_json_default).encode()
     digest = sha256 or sha256_bytes(canonical)
@@ -534,6 +549,15 @@ def document_from_cache_record(record: dict[str, Any]) -> NormalizedDocument:
         license=record.get("license"),
         ingested_at=_parse_datetime(record.get("ingested_at")),
         metadata=metadata,
+        publisher=record.get("publisher"),
+        oa_status=record.get("oa_status"),
+        doc_type=record.get("doc_type"),
+        is_review=bool(record.get("is_review", False)),
+        is_retracted=bool(record.get("is_retracted", False)),
+        preprint_of_doi=record.get("preprint_of_doi"),
+        full_text_source=record.get("full_text_source"),
+        access_route=record.get("access_route"),
+        sections=list(record.get("sections") or []),
     )
 
 
@@ -550,6 +574,7 @@ def chunk_to_cache_record(
         "chunk_type": chunk.chunk_type,
         "content": chunk.content,
         "token_count": chunk.token_count,
+        "section_label": chunk.section_label,
         "embedding_model": embedding_model,
         "embedding_status": "pending",
     }
@@ -562,6 +587,7 @@ def chunk_from_cache_record(record: dict[str, Any]) -> Chunk:
         chunk_type=record.get("chunk_type", "abstract"),
         content=record["content"],
         token_count=record.get("token_count"),
+        section_label=record.get("section_label"),
     )
 
 

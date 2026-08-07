@@ -1,0 +1,27 @@
+# RLALab corpus configuration — index the full text a datasheet run already fetched.
+#
+# Reads <run_dir>/fulltext/*.json, written by the acquisition ladder with section
+# labels intact, and indexes each section as its own chunk so citations can name
+# the section. Makes no network calls: everything is already on disk.
+
+[corpus]
+name            = "rlalab-datasheet-fulltext-v1"
+source          = "datasheet_fulltext"
+embedding_model = "pubmedbert"
+
+[datasheet]
+run_dir = "./data/corpora/datasheets/CHANGE-ME"
+
+min_relevance   = "studies"
+include_reviews = false
+
+[chunking]
+# Larger than the abstract default: a Methods section is long, and splitting it
+# into 512-word pieces separates a protocol from its own conditions.
+chunk_size    = 1024
+chunk_overlap = 128
+
+[indexing]
+# Full-text chunks are long; embed them one at a time to keep peak memory flat
+# on a CPU-only host. Same reasoning as fulltext.pmc.rlalab.toml.
+embedding_batch_size = 1

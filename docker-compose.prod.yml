@@ -1,8 +1,21 @@
+# Every container's stdout/stderr is the log. Docker's default json-file driver
+# has NO rotation, so a chatty backend fills the VM disk and takes Postgres down
+# with it; and without max-file, history is whatever one unbounded file holds.
+# 20 MB × 5 caps each service at 100 MB and keeps enough past for
+# `scripts/collect-logs.sh --since 48h` to still find the incident.
+# `docker logs` reads the rotated files too, so nothing is hidden by this.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   db:
     image: pgvector/pgvector:pg16
     container_name: rlalab_db
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -22,6 +35,7 @@ services:
       dockerfile: backend/Dockerfile
     container_name: rlalab_backend
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - .env
       - .env.server
@@ -50,6 +64,7 @@ services:
       dockerfile: backend/Dockerfile
     container_name: rlalab_ingestion_worker
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - .env
       - .env.server
@@ -72,6 +87,7 @@ services:
       dockerfile: backend/Dockerfile
     container_name: rlalab_evaluation_worker
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - .env
       - .env.server
@@ -94,6 +110,7 @@ services:
       dockerfile: Dockerfile
     container_name: rlalab_frontend
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - .env
       - .env.server
@@ -125,6 +142,7 @@ services:
     image: nginx:alpine
     container_name: rlalab_nginx
     restart: unless-stopped
+    logging: *default-logging
     profiles: ["tls"]
     ports:
       - "80:80"

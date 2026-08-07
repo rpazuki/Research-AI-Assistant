@@ -418,6 +418,37 @@ def test_an_excluded_candidate_is_recorded_as_skipped_not_deleted() -> None:
     assert excluded.relevance_reason == "single mention"
 
 
+def test_the_manifest_is_written_into_the_runs_cache_directory(tmp_path, monkeypatch) -> None:
+    """A run directory has to describe itself: `safe_stem` is one-way, so without
+    this CSV nothing outside the database can map `assets/<stem>.pdf` back to a
+    paper — and the ingestion pipeline reads exactly this file."""
+    from pipelines.acquisition.cache_layout import manifest_csv_path
+
+    run = make_run()
+    monkeypatch.setattr(discovery_service, "resolve_run_cache_root", lambda _run: tmp_path)
+
+    path = discovery_service.write_manifest_to_cache(
+        run,
+        [Candidate(doi="10.1/keep", title="Kept", relevance="studies")],
+        included_dois={"10.1/keep"},
+    )
+
+    assert path == manifest_csv_path(tmp_path)
+    text = path.read_text()
+    assert text.splitlines()[0].startswith("doi,pmid,pmc_id,title")
+    assert "Kept" in text
+
+
+def test_a_manifest_that_cannot_be_written_does_not_fail_the_run(tmp_path, monkeypatch) -> None:
+    """4,000 papers found must not be discarded because a directory is read-only."""
+    def explode(_run):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(discovery_service, "resolve_run_cache_root", explode)
+
+    assert discovery_service.write_manifest_to_cache(make_run(), [], included_dois=set()) is None
+
+
 def test_the_preprint_doi_survives_persistence() -> None:
     """bioRxiv serves JATS for it openly, which is often the only free full text
     for a paywalled version of record."""

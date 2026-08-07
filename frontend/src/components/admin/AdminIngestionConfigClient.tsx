@@ -7,10 +7,12 @@ import { useRouter } from "next/navigation";
 import {
   createIngestionConfig,
   getIngestionConfig,
+  listDatasheetRuns,
   listIngestionConfigs,
   updateIngestionConfig,
 } from "@/lib/api";
 import type {
+  DatasheetRunSummary,
   IngestionConfigContent,
   IngestionConfigSummary,
   TomlValue,
@@ -20,11 +22,21 @@ import AdminHeader from "./AdminHeader";
 type SourceName =
   | "pubmed_abstract"
   | "pmc_fulltext"
+  | "discovery_search"
+  | "datasheet_manifest"
+  | "datasheet_fulltext"
+  | "datasheet_rows"
   | "pdf"
   | "lab_protocols"
   | "eln_lims"
   | "inventories"
   | "omics_summaries";
+
+const DATASHEET_SOURCES: SourceName[] = [
+  "datasheet_manifest",
+  "datasheet_fulltext",
+  "datasheet_rows",
+];
 
 type FieldType = "text" | "textarea" | "number" | "checkbox" | "list" | "select";
 
@@ -38,11 +50,17 @@ interface FieldDefinition {
   options?: { value: string; label: string }[];
   step?: string;
   wide?: boolean;
+  // Options filled at render time from live data rather than a fixed list.
+  optionsSource?: "datasheet_runs";
 }
 
 const SOURCE_OPTIONS: { value: SourceName; label: string }[] = [
   { value: "pubmed_abstract", label: "PubMed abstracts" },
   { value: "pmc_fulltext", label: "PMC full text" },
+  { value: "discovery_search", label: "Multi-source discovery search" },
+  { value: "datasheet_manifest", label: "Datasheet run — manifest worklist" },
+  { value: "datasheet_fulltext", label: "Datasheet run — fetched full text" },
+  { value: "datasheet_rows", label: "Datasheet rows (CSV)" },
   { value: "pdf", label: "Local PDFs" },
   { value: "lab_protocols", label: "Lab protocols" },
   { value: "eln_lims", label: "ELN / LIMS summaries" },
@@ -160,6 +178,196 @@ const SOURCE_FIELDS: Record<SourceName, FieldDefinition[]> = {
       description: "Delay between PMC full-text fetches to keep upstream requests gentle.",
     },
   ],
+  discovery_search: [
+    {
+      section: "discovery",
+      key: "organism_terms",
+      label: "Organism terms",
+      type: "list",
+      required: true,
+      wide: true,
+      description:
+        "One term per line. A candidate must match an organism term to be considered relevant at all.",
+    },
+    {
+      section: "discovery",
+      key: "product_terms",
+      label: "Product terms",
+      type: "list",
+      wide: true,
+      description:
+        "One term per line. Product terms only promote an already relevant paper; they never rescue an off-topic one.",
+    },
+    {
+      section: "discovery",
+      key: "sources",
+      label: "Sources",
+      type: "list",
+      description:
+        "One per line: pubmed, europepmc, crossref, openalex. A source that fails is reported, not treated as zero results.",
+    },
+    {
+      section: "discovery",
+      key: "year_from",
+      label: "Year from",
+      type: "number",
+      description: "Earliest publication year included in the search window.",
+    },
+    {
+      section: "discovery",
+      key: "year_to",
+      label: "Year to",
+      type: "number",
+      description: "Latest publication year included in the search window.",
+    },
+    {
+      section: "discovery",
+      key: "max_records_per_source",
+      label: "Max records per source",
+      type: "number",
+      description: "Upper bound on records fetched from each source before merging and deduplication.",
+    },
+    {
+      section: "discovery",
+      key: "include_mentions",
+      label: "Include peripheral mentions",
+      type: "checkbox",
+      description: "Also index papers where a seed term appears outside the title and abstract focus.",
+    },
+    {
+      section: "discovery",
+      key: "include_reviews",
+      label: "Include reviews",
+      type: "checkbox",
+      description: "Index review articles as well as primary research. Excluded by default.",
+    },
+    {
+      section: "discovery",
+      key: "check_retraction_notices",
+      label: "Check retraction notices",
+      type: "checkbox",
+      description:
+        "Run one extra PubMed search per included DOI to catch retractions not flagged in source metadata.",
+    },
+  ],
+  datasheet_manifest: [
+    {
+      section: "datasheet",
+      key: "run_dir",
+      label: "Datasheet run",
+      type: "select",
+      required: true,
+      wide: true,
+      optionsSource: "datasheet_runs",
+      description:
+        "The finished datasheet run whose manifest drives this build. Its discovery manifest lists which papers were judged relevant.",
+    },
+    {
+      section: "datasheet",
+      key: "fetch_fulltext",
+      label: "Fetch full text where available",
+      type: "checkbox",
+      description:
+        "Fetch PMC full text for rows with a PMCID, falling back to the abstract when the full text is not retrievable.",
+    },
+    {
+      section: "datasheet",
+      key: "skip_metadata_only",
+      label: "Skip rows without PMID or PMCID",
+      type: "checkbox",
+      description:
+        "Manifest rows with neither identifier have a title and no abstract. Skipped by default; the count is logged.",
+    },
+    {
+      section: "datasheet",
+      key: "min_relevance",
+      label: "Minimum relevance",
+      type: "select",
+      options: [
+        { value: "studies", label: "studies (subject of the paper)" },
+        { value: "mentions", label: "mentions (peripheral)" },
+      ],
+      description: "The weakest relevance verdict a manifest row may carry and still be indexed.",
+    },
+    {
+      section: "datasheet",
+      key: "include_reviews",
+      label: "Include reviews",
+      type: "checkbox",
+      description: "Index review articles from the manifest as well as primary research.",
+    },
+  ],
+  datasheet_fulltext: [
+    {
+      section: "datasheet",
+      key: "run_dir",
+      label: "Datasheet run",
+      type: "select",
+      required: true,
+      wide: true,
+      optionsSource: "datasheet_runs",
+      description:
+        "The run whose already fetched full text is indexed. No network calls are made: the text is read from the run's cache.",
+    },
+    {
+      section: "datasheet",
+      key: "min_relevance",
+      label: "Minimum relevance",
+      type: "select",
+      options: [
+        { value: "studies", label: "studies (subject of the paper)" },
+        { value: "mentions", label: "mentions (peripheral)" },
+      ],
+      description: "The weakest relevance verdict a manifest row may carry and still be indexed.",
+    },
+    {
+      section: "datasheet",
+      key: "include_reviews",
+      label: "Include reviews",
+      type: "checkbox",
+      description: "Index review articles from the run as well as primary research.",
+    },
+  ],
+  datasheet_rows: [
+    {
+      section: "datasheet",
+      key: "rows_csv",
+      label: "Datasheet CSV",
+      type: "text",
+      required: true,
+      wide: true,
+      description:
+        "CSV or TSV whose header matches the datasheet template. Each row becomes its own document so answers cite that row's paper.",
+    },
+    {
+      section: "datasheet",
+      key: "template_name",
+      label: "Template name",
+      type: "text",
+      description: "Recorded on each row and used to keep row identities stable across rebuilds.",
+    },
+    {
+      section: "datasheet",
+      key: "access_status",
+      label: "Access status",
+      type: "text",
+      description: "Access classification recorded on cached assets, such as internal or restricted.",
+    },
+    {
+      section: "datasheet",
+      key: "sensitivity",
+      label: "Sensitivity",
+      type: "text",
+      description: "Sensitivity label stored with the curated rows' provenance metadata.",
+    },
+    {
+      section: "datasheet",
+      key: "owner",
+      label: "Owner",
+      type: "text",
+      description: "Team or person responsible for the curated datasheet.",
+    },
+  ],
   pdf: [
     {
       section: "pdf",
@@ -209,7 +417,17 @@ const ADVANCED_FIELDS: FieldDefinition[] = [
   { section: "indexing", key: "embedding_batch_size", label: "Embedding batch size", type: "number", description: "Number of chunks embedded per model batch during indexing." },
 ];
 
+// Sources that index a title and abstract rather than a body. Their chunks are
+// smaller because the whole document usually fits in one.
+const ABSTRACT_SOURCES: SourceName[] = [
+  "pubmed_abstract",
+  "discovery_search",
+  "datasheet_manifest",
+  "datasheet_rows",
+];
+
 function defaultConfig(source: SourceName, corpusName = "rlalab-pubmed-v1"): IngestionConfigContent {
+  const isAbstractSource = ABSTRACT_SOURCES.includes(source);
   const common = {
     corpus: {
       name: corpusName,
@@ -217,8 +435,8 @@ function defaultConfig(source: SourceName, corpusName = "rlalab-pubmed-v1"): Ing
       embedding_model: "pubmedbert",
     },
     chunking: {
-      chunk_size: source === "pubmed_abstract" ? 512 : 1024,
-      chunk_overlap: source === "pubmed_abstract" ? 64 : 128,
+      chunk_size: isAbstractSource ? 512 : 1024,
+      chunk_overlap: isAbstractSource ? 64 : 128,
     },
   };
 
@@ -244,6 +462,57 @@ function defaultConfig(source: SourceName, corpusName = "rlalab-pubmed-v1"): Ing
         sleep_between_batches_s: 1,
       },
       indexing: { embedding_batch_size: 1 },
+    };
+  }
+  if (source === "discovery_search") {
+    return {
+      ...common,
+      discovery: {
+        organism_terms: ["Yarrowia lipolytica"],
+        product_terms: [],
+        sources: ["pubmed", "europepmc", "crossref", "openalex"],
+        year_from: 2016,
+        year_to: new Date().getFullYear(),
+        max_records_per_source: 5000,
+        include_mentions: false,
+        include_reviews: false,
+        check_retraction_notices: false,
+      },
+    };
+  }
+  if (source === "datasheet_manifest") {
+    return {
+      ...common,
+      datasheet: {
+        run_dir: "",
+        fetch_fulltext: true,
+        skip_metadata_only: true,
+        min_relevance: "studies",
+        include_reviews: false,
+      },
+    };
+  }
+  if (source === "datasheet_fulltext") {
+    return {
+      ...common,
+      datasheet: {
+        run_dir: "",
+        min_relevance: "studies",
+        include_reviews: false,
+      },
+      indexing: { embedding_batch_size: 1 },
+    };
+  }
+  if (source === "datasheet_rows") {
+    return {
+      ...common,
+      datasheet: {
+        rows_csv: "./data/datasheets/rows.csv",
+        template_name: "default",
+        access_status: "internal",
+        sensitivity: "internal",
+        owner: "RLA Lab",
+      },
     };
   }
   if (source === "pdf") {
@@ -354,10 +623,12 @@ function FieldControl({
   field,
   value,
   onChange,
+  dynamicOptions,
 }: {
   field: FieldDefinition;
   value: TomlValue | undefined;
   onChange: (value: TomlValue) => void;
+  dynamicOptions?: { value: string; label: string }[];
 }) {
   const label = (
     <LabelWithTooltip
@@ -367,6 +638,13 @@ function FieldControl({
     />
   );
   const fieldClassName = field.wide ? "min-w-0 md:col-span-2" : "min-w-0";
+
+  // A select whose options come from live data falls back to a text input when
+  // there is nothing to choose from. Rendering an empty dropdown would make a
+  // required field unfillable — and a path typed by hand is still valid.
+  const options = field.optionsSource ? dynamicOptions ?? [] : field.options;
+  const isEmptyDynamicSelect =
+    field.type === "select" && field.optionsSource !== undefined && options?.length === 0;
 
   if (field.type === "checkbox") {
     return (
@@ -395,7 +673,7 @@ function FieldControl({
     );
   }
 
-  if (field.type === "select") {
+  if (field.type === "select" && !isEmptyDynamicSelect) {
     return (
       <label className={`grid gap-1 text-sm ${fieldClassName}`}>
         {label}
@@ -404,7 +682,8 @@ function FieldControl({
           onChange={(event) => onChange(parseInputValue(field, event.target.value))}
           className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2"
         >
-          {field.options?.map((option) => (
+          {field.optionsSource ? <option value="">Select a datasheet run…</option> : null}
+          {options?.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
@@ -418,11 +697,12 @@ function FieldControl({
     <label className={`grid gap-1 text-sm ${fieldClassName}`}>
       {label}
       <input
-        type={field.type}
+        type={field.type === "select" ? "text" : field.type}
         step={field.step}
         value={valueToInput(value, field) as string}
         onChange={(event) => onChange(parseInputValue(field, event.target.value))}
         className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2"
+        placeholder={isEmptyDynamicSelect ? "data/corpora/datasheets/<run>" : undefined}
       />
     </label>
   );
@@ -452,12 +732,44 @@ export default function AdminIngestionConfigClient() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const [datasheetRuns, setDatasheetRuns] = useState<DatasheetRunSummary[]>([]);
+
   const source = sourceFromContent(content);
   const sourceFields = useMemo(() => SOURCE_FIELDS[source], [source]);
+
+  const datasheetRunOptions = useMemo(
+    () =>
+      datasheetRuns
+        .filter((run) => run.cache_path)
+        .map((run) => ({
+          value: run.cache_path as string,
+          label: `${run.name} — ${run.candidate_count ?? 0} candidates (${run.status})`,
+        })),
+    [datasheetRuns]
+  );
 
   useEffect(() => {
     void loadConfigs();
   }, []);
+
+  useEffect(() => {
+    // Only when a datasheet source is selected: an admin editing a PubMed config
+    // has no reason to trigger a run listing.
+    if (!DATASHEET_SOURCES.includes(source)) return;
+    let cancelled = false;
+    listDatasheetRuns()
+      .then((runs) => {
+        if (!cancelled) setDatasheetRuns(runs);
+      })
+      .catch(() => {
+        // A failed listing is not an editing error: the run-dir field falls back
+        // to a plain text input, which still accepts a valid path.
+        if (!cancelled) setDatasheetRuns([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [source]);
 
 
   useEffect(() => {
@@ -681,6 +993,9 @@ export default function AdminIngestionConfigClient() {
                       field={field}
                       value={content[field.section]?.[field.key]}
                       onChange={(value) => updateField(field, value)}
+                      dynamicOptions={
+                        field.optionsSource === "datasheet_runs" ? datasheetRunOptions : undefined
+                      }
                     />
                   ))}
                 </div>

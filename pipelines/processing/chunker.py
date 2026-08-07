@@ -25,6 +25,10 @@ class Chunk:
     chunk_type: str
     content: str
     token_count: int | None = None
+    # Which part of the paper this text came from: title|abstract|introduction|
+    # methods|results|discussion|supplementary. Only sources that know the answer
+    # set it; retrieval already reads the column and shows it in citations.
+    section_label: str | None = None
 
 
 ChunkMode = Literal["abstract", "fulltext"]
@@ -64,6 +68,37 @@ class Chunker:
             )
             for i, chunk in enumerate(raw_chunks)
         ]
+
+    def chunk_sections(
+        self,
+        document_id: str,
+        sections: list[tuple[str | None, str]],
+        *,
+        chunk_type: str = "fulltext",
+    ) -> list[Chunk]:
+        """Chunk a document whose sections are already known, label intact.
+
+        Each `(label, text)` pair is split on its own so no chunk ever straddles
+        Methods and Results — a chunk that did could not honestly claim either
+        label, and section-level citation is the whole point. `chunk_index` runs
+        continuously across sections so it stays the document-wide ordering.
+        """
+        chunks: list[Chunk] = []
+        for label, text in sections:
+            if not text or not text.strip():
+                continue
+            for piece in self._split_text(text):
+                chunks.append(
+                    Chunk(
+                        document_id=document_id,
+                        chunk_index=len(chunks),
+                        chunk_type=chunk_type,
+                        content=piece,
+                        token_count=self._approx_token_count(piece),
+                        section_label=label,
+                    )
+                )
+        return chunks
 
     def _split_text(self, text: str) -> list[str]:
         """

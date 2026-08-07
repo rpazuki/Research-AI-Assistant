@@ -230,6 +230,10 @@ class DatasheetRunSummary(BaseModel):
     candidate_count: int | None = None
     progress_message: str | None = None
     error: str | None = None
+    # Repo-relative (migration 0007). Surfaced so the ingestion config editor can
+    # offer a finished run as a corpus source without anyone retyping a path
+    # whose last segment is a UUID fragment.
+    cache_path: str | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None

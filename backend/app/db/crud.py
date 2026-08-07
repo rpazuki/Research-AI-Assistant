@@ -848,10 +848,16 @@ async def request_ingestion_job_cancel(
 async def get_admin_stats(db: AsyncSession) -> dict:
     """Return aggregate admin dashboard stats from persisted operational data."""
     notebook_sources = ("eln", "electronic_lab_notebook", "lab_notebook", "notebook")
+    # A datasheet row has a `full_text` — the rendered row — but counting it as a
+    # full-text article would inflate the one number this panel exists to report:
+    # how many papers the corpus holds bodies for. Rows stay visible in the
+    # per-source breakdown below and fall into "other" here, which is accurate.
+    curated_row_sources = ("datasheet_row",)
+    non_article_sources = ("pdf", *notebook_sources, *curated_row_sources)
     full_text_condition = and_(
         Document.full_text.isnot(None),
         Document.full_text != "",
-        Document.source.notin_(("pdf", *notebook_sources)),
+        Document.source.notin_(non_article_sources),
     )
     pdf_condition = Document.source == "pdf"
     notebook_condition = Document.source.in_(notebook_sources)
@@ -859,7 +865,7 @@ async def get_admin_stats(db: AsyncSession) -> dict:
         Document.abstract.isnot(None),
         Document.abstract != "",
         or_(Document.full_text.is_(None), Document.full_text == ""),
-        Document.source.notin_(("pdf", *notebook_sources)),
+        Document.source.notin_(non_article_sources),
     )
     known_content_condition = or_(
         abstract_only_condition,

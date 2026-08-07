@@ -87,6 +87,21 @@ def apply_pipeline_env_overrides(config: dict[str, Any]) -> dict[str, Any]:
     if pubmed:
         config = {**config, "pubmed": pubmed}
 
+    # Contact addresses for the polite pools. Not secrets, but they belong with
+    # the other .env values rather than in a committed config, and both fall
+    # back to the NCBI address — the one guaranteed to be set.
+    discovery = dict(config.get("discovery", {}))
+    if os.environ.get("NCBI_EMAIL"):
+        discovery["ncbi_email"] = os.environ["NCBI_EMAIL"]
+    if os.environ.get("NCBI_API_KEY"):
+        discovery["ncbi_api_key"] = os.environ["NCBI_API_KEY"]
+    if os.environ.get("CROSSREF_MAILTO"):
+        discovery["crossref_mailto"] = os.environ["CROSSREF_MAILTO"]
+    if os.environ.get("OPENALEX_MAILTO"):
+        discovery["openalex_mailto"] = os.environ["OPENALEX_MAILTO"]
+    if discovery:
+        config = {**config, "discovery": discovery}
+
     return config
 
 

@@ -43,6 +43,10 @@ SAFE_CONFIG_NAME = re.compile(r"^[A-Za-z0-9._ -]+\.toml$")
 SUPPORTED_SOURCES = {
     "pubmed_abstract",
     "pmc_fulltext",
+    "discovery_search",
+    "datasheet_manifest",
+    "datasheet_fulltext",
+    "datasheet_rows",
     "pdf",
     "lab_protocols",
     "eln_lims",
@@ -51,6 +55,9 @@ SUPPORTED_SOURCES = {
 }
 LOCAL_TEXT_SOURCES = {"lab_protocols"}
 LOCAL_TABLE_SOURCES = {"eln_lims", "inventories", "omics_summaries"}
+DATASHEET_SOURCES = {"datasheet_manifest", "datasheet_fulltext", "datasheet_rows"}
+DISCOVERY_SOURCE_NAMES = {"pubmed", "europepmc", "crossref", "openalex"}
+RELEVANCE_FLOORS = {"studies", "mentions"}
 EMBEDDING_MODELS = {"pubmedbert", "minilm"}
 
 
@@ -76,6 +83,8 @@ def dump_toml_sections(config: dict[str, Any]) -> str:
         "corpus",
         "pubmed",
         "pmc",
+        "discovery",
+        "datasheet",
         "pdf",
         "lab_protocols",
         "eln_lims",
@@ -266,6 +275,20 @@ def _positive_number(section: dict[str, Any], key: str, label: str, *, required:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{label} must be positive")
 
 
+def _string_list(section: dict[str, Any], key: str, label: str, *, required: bool) -> None:
+    value = section.get(key)
+    if value is None or value == "" or value == []:
+        if required:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{label} are required")
+        section.pop(key, None)
+        return
+    if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"{label} must be a list of non-empty text values"
+        )
+    section[key] = [item.strip() for item in value]
+
+
 def _bool_field(section: dict[str, Any], key: str) -> None:
     value = section.get(key)
     if value is None or value == "":
@@ -315,6 +338,70 @@ def validate_ingestion_config_content(content: dict[str, Any]) -> dict[str, Any]
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="PMC config needs IDs, a PMCID file, or cached PubMed documents",
             )
+
+    if source == "discovery_search":
+        discovery = _section(config, "discovery")
+        _string_list(discovery, "organism_terms", "Organism terms", required=True)
+        _string_list(discovery, "product_terms", "Product terms", required=False)
+        _string_list(discovery, "sources", "Discovery sources", required=False)
+        unknown = set(discovery.get("sources") or ()) - DISCOVERY_SOURCE_NAMES
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown discovery sources: {', '.join(sorted(unknown))}",
+            )
+        _int_field(discovery, "year_from", "Year from", required=False)
+        _int_field(discovery, "year_to", "Year to", required=False)
+        if (
+            "year_from" in discovery
+            and "year_to" in discovery
+            and discovery["year_from"] > discovery["year_to"]
+        ):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Year from cannot exceed year to")
+        _int_field(discovery, "max_records_per_source", "Max records per source", required=False)
+        if "max_records_per_source" in discovery and discovery["max_records_per_source"] <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Max records per source must be positive",
+            )
+        for key in (
+            "include_mentions",
+            "include_reviews",
+            "collapse_preprint_versions",
+            "check_retraction_notices",
+        ):
+            _bool_field(discovery, key)
+
+    if source in DATASHEET_SOURCES:
+        datasheet = _section(config, "datasheet")
+        if source == "datasheet_rows":
+            _required_string(datasheet, "rows_csv", "Datasheet rows file")
+            for key in ("template_name", "access_status", "sensitivity", "owner", "retention_policy"):
+                _optional_string(datasheet, key)
+        else:
+            # A manifest path is an accepted alternative to a run directory, so
+            # neither is required on its own — but one of them must be present,
+            # otherwise the job fails only once the worker picks it up.
+            _optional_string(datasheet, "run_dir")
+            _optional_string(datasheet, "manifest_csv")
+            if not datasheet.get("run_dir") and not datasheet.get("manifest_csv"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Datasheet config needs a run directory or a manifest CSV path",
+                )
+            _optional_string(datasheet, "min_relevance")
+            if datasheet.get("min_relevance") and datasheet["min_relevance"] not in RELEVANCE_FLOORS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Minimum relevance must be 'studies' or 'mentions'",
+                )
+            for key in (
+                "fetch_fulltext",
+                "skip_metadata_only",
+                "include_reviews",
+                "include_retracted",
+            ):
+                _bool_field(datasheet, key)
 
     if source == "pdf":
         pdf = _section(config, "pdf")

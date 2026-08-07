@@ -40,7 +40,7 @@ class NormalizedDocument:
         DOI:     'doi:10.xxxx/...' (fallback if no PMID)
     """
     document_id: str
-    source: str                          # 'pubmed' | 'pmc' | 'pdf'
+    source: str                          # 'pubmed' | 'pmc' | 'pdf' | 'discovery' | ...
     title: str | None = None
     abstract: str | None = None
     full_text: str | None = None         # None for abstract-only ingestion
@@ -57,6 +57,26 @@ class NormalizedDocument:
     license: str | None = None
     ingested_at: datetime = field(default_factory=utc_now)
     metadata: dict = field(default_factory=dict)
+
+    # ── Bibliographic sidecar ─────────────────────────────────────────────────
+    # These map onto columns the `documents` table has carried since migration
+    # 0006 but that no ingester could reach. `is_retracted` in particular is not
+    # cosmetic: retrieval hides retracted work (`app/rag/retrieval.py`), so a
+    # source that knows a paper is retracted must be able to say so.
+    publisher: str | None = None
+    oa_status: str | None = None         # gold|hybrid|green|bronze|closed
+    doc_type: str | None = None          # primary|review|other
+    is_review: bool = False
+    is_retracted: bool = False
+    preprint_of_doi: str | None = None
+    full_text_source: str | None = None  # pmc_jats|publisher_xml|pdf_text|abstract_only
+    access_route: str | None = None
+
+    # Section-split body, as [{"label": "methods", "text": "..."}]. Not a column:
+    # the text is already in `full_text`, and this only tells the chunker where
+    # each part came from so chunks can carry a section label. Sources that
+    # cannot tell sections apart leave it empty and are chunked as one block.
+    sections: list[dict] = field(default_factory=list)
 
     def text_for_indexing(self, mode: str = "abstract") -> str:
         """
@@ -106,4 +126,12 @@ class NormalizedDocument:
             "license": self.license,
             "ingested_at": self.ingested_at,
             "metadata": self.metadata,
+            "publisher": self.publisher,
+            "oa_status": self.oa_status,
+            "doc_type": self.doc_type,
+            "is_review": self.is_review,
+            "is_retracted": self.is_retracted,
+            "preprint_of_doi": self.preprint_of_doi,
+            "full_text_source": self.full_text_source,
+            "access_route": self.access_route,
         }

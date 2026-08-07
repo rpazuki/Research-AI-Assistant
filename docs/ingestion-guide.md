@@ -50,6 +50,10 @@ Supported implemented values are:
 
 - `pubmed_abstract`
 - `pmc_fulltext`
+- `discovery_search`
+- `datasheet_manifest`
+- `datasheet_fulltext`
+- `datasheet_rows`
 - `pdf`
 - `lab_protocols`
 - `eln_lims`
@@ -71,6 +75,11 @@ data/corpora/<corpus_name>/<run_id>/
   raw/licensed/originals/*
   raw/lab/originals/*
   raw/lab/extracted/*.txt
+  raw/discovery/candidates.jsonl
+  raw/discovery/summary.json
+  raw/datasheet/manifest.csv
+  raw/datasheet/fulltext/*.json
+  raw/datasheet/rows/rows.jsonl
   normalized/documents.jsonl
   normalized/documents.errors.jsonl
   chunks/chunks.jsonl
@@ -120,6 +129,90 @@ The run writes:
 - normalized records to `normalized/documents.jsonl`
 - chunks to `chunks/chunks.jsonl`
 - source asset records to `assets/asset_manifest.jsonl`
+
+## Multi-Source Discovery Search
+
+PubMed does not index everything this lab reads. A measured Yarrowia run found
+**97% of the gold papers PubMed misses**, mostly through Crossref and OpenAlex
+(`docs/DATASHEET_FEATURE_PLAN.md` §8). The `discovery_search` source runs the
+same engine the datasheet feature uses — PubMed, Europe PMC, Crossref and
+OpenAlex in one pass, then canonicalisation, preprint collapse, doc-type
+classification and relevance judgement — and indexes what survives.
+
+```bash
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/discovery.multisource.rlalab.toml \
+  --cache data/corpora/rlalab-discovery-v1/cumulative
+```
+
+Before a first real run, narrow the config: one organism term and
+`max_records_per_source = 50`. A full sweep is several thousand HTTP requests.
+
+The run writes:
+
+- every candidate, kept or dropped, to `raw/discovery/candidates.jsonl`
+- per-source counts and per-source errors to `raw/discovery/summary.json`
+- an auditable manifest to `reports/discovery_manifest.csv`, one row per
+  candidate with its relevance verdict and the reason for it
+
+Two things to read in the log rather than assume:
+
+- **A failed source is not zero results.** `discovery: source crossref returned
+  no records` means partial coverage, and any recall claim after it is wrong.
+- **Candidates with no abstract** are counted and warned about. Crossref-only
+  rows often have none; they are indexed from their title alone.
+
+Contact addresses (`NCBI_EMAIL`, and optionally `CROSSREF_MAILTO` /
+`OPENALEX_MAILTO`, which both fall back to it) come from `.env`. They are what
+buys polite-pool rate limits; without them the sweep is much slower.
+
+## Ingesting A Datasheet Run
+
+A datasheet run has already searched, judged and — in its acquisition phase —
+fetched full text. Three sources reuse that work instead of repeating it. All
+three read a run's cache directory, shown on the admin run page and stored on
+the run as `cache_path`.
+
+**The manifest as a worklist.** Indexes the papers the run judged relevant:
+PMCIDs are fetched as full text, everything else as an abstract. When a PMC
+fetch fails — the OA subset is smaller than the set of deposited articles — the
+pipeline falls back to the abstract rather than dropping the paper.
+
+```bash
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/datasheet.manifest.rlalab.toml
+```
+
+Rows with neither PMID nor PMCID have a title and no abstract. They are skipped
+by default and the count is logged; set `skip_metadata_only = false` to index
+them as title-only records.
+
+**The full text already fetched.** No network calls at all: it reads
+`<run>/fulltext/*.json`, which the acquisition ladder wrote with section labels
+intact, and chunks each section separately so a citation can name the Methods
+section a claim came from.
+
+```bash
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/datasheet.fulltext.rlalab.toml
+```
+
+**Curated rows.** One document per row, because a row is the unit a researcher
+asks about and it carries its own DOI. Input is any CSV/TSV whose header matches
+the datasheet template — the phase-E export when it exists, and the curators'
+spreadsheet saved as CSV until then.
+
+```bash
+python -m pipelines.indexing.build_index \
+  --config pipelines/configs/datasheet.rows.rlalab.toml
+```
+
+The manifest a run writes at the end of its discovery phase
+(`<run>/discovery/manifest.csv`) is what makes any of this possible: the stems
+under `assets/` and `fulltext/` are one-way hashes of a DOI, so without the CSV
+nothing outside the database can say which paper a file belongs to. Runs that
+finished before this was added can export one from the admin run page and drop
+it at that path, or point `[datasheet].manifest_csv` at it directly.
 
 ## Local-Only Re-Indexing
 

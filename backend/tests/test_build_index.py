@@ -1,6 +1,13 @@
+import json
+
 from pipelines.corpus_cache import CorpusCache, CorpusManifest
 from pipelines.indexing.build_index import (
     batched,
+    chunk_mode_for_source,
+    chunks_for_document,
+    documents_from_cached_datasheet_fulltext,
+    documents_from_cached_datasheet_rows,
+    documents_from_cached_discovery,
     documents_from_cached_lab_text,
     documents_from_cached_pdf_text,
     embedding_batch_size_for_source,
@@ -8,6 +15,7 @@ from pipelines.indexing.build_index import (
     open_or_create_cache_from_path,
     validate_index_embedding,
 )
+from pipelines.processing.chunker import Chunker
 from pipelines.processing.normalizer import NormalizedDocument
 
 
@@ -129,3 +137,201 @@ def test_documents_from_cached_lab_text_reads_extracted_exports(tmp_path) -> Non
     assert docs[0].document_id == "lab_protocols:protocol123"
     assert docs[0].full_text == "protocol content"
     assert docs[0].metadata["access_method"] == "local-export"
+
+
+# ── Chunk mode ────────────────────────────────────────────────────────────────
+
+
+def test_chunk_mode_is_stated_per_source_not_sniffed_from_the_name() -> None:
+    """The old rule was `"abstract" in source`, which filed discovery_search and
+    every datasheet_* key under fulltext by accident."""
+    assert chunk_mode_for_source("pubmed_abstract") == "abstract"
+    assert chunk_mode_for_source("discovery_search") == "abstract"
+    assert chunk_mode_for_source("datasheet_manifest") == "abstract"
+    assert chunk_mode_for_source("pmc_fulltext") == "fulltext"
+    assert chunk_mode_for_source("datasheet_fulltext") == "fulltext"
+    assert chunk_mode_for_source("lab_protocols") == "fulltext"
+    assert chunk_mode_for_source("something_new") == "fulltext"
+
+
+def test_documents_with_sections_are_chunked_section_by_section() -> None:
+    doc = NormalizedDocument(
+        document_id="pmid:1",
+        source="pmc",
+        title="A title",
+        full_text="ignored when sections are present",
+        sections=[
+            {"label": "methods", "text": "Strains were grown."},
+            {"label": "results", "text": "Titre reached 50 g/L."},
+        ],
+    )
+
+    chunks = chunks_for_document(Chunker(chunk_size=1000, mode="fulltext"), doc)
+
+    assert [chunk.section_label for chunk in chunks] == ["title", "methods", "results"]
+
+
+def test_documents_without_sections_fall_back_to_whole_document_chunking() -> None:
+    doc = NormalizedDocument(document_id="pmid:1", source="pubmed", abstract="One sentence.")
+
+    chunks = chunks_for_document(Chunker(mode="abstract"), doc)
+
+    assert len(chunks) == 1
+    assert chunks[0].section_label is None
+
+
+def test_row_scoped_sources_are_not_deduplicated_by_pmid_or_title() -> None:
+    """Found by a real indexing run: two datasheet rows about one paper share its
+    PMID and title, so the default deduplicator kept the first and dropped the
+    second — silently discarding exactly the data the source exists to expose.
+    Their identity is the row hash in document_id, which still catches a re-read.
+    """
+    from types import SimpleNamespace
+
+    from pipelines.indexing.build_index import ROW_SCOPED_SOURCES
+    from pipelines.processing.deduplicator import Deduplicator
+
+    assert "datasheet_rows" in ROW_SCOPED_SOURCES
+
+    dedup = Deduplicator(match_on_pmid=False, match_on_title=False)
+    first = SimpleNamespace(
+        document_id="datasheet_row:aaa", pmid="31234567", title="Datasheet row: A paper"
+    )
+    second = SimpleNamespace(
+        document_id="datasheet_row:bbb", pmid="31234567", title="Datasheet row: A paper"
+    )
+
+    assert dedup.is_duplicate(first) is False
+    dedup.register(first)
+    assert dedup.is_duplicate(second) is False
+    dedup.register(second)
+    # The same row read twice is still a duplicate.
+    assert dedup.is_duplicate(first) is True
+
+
+def test_paper_scoped_sources_keep_pmid_deduplication() -> None:
+    from types import SimpleNamespace
+
+    from pipelines.processing.deduplicator import Deduplicator
+
+    dedup = Deduplicator()
+    dedup.register(SimpleNamespace(document_id="pmid:1", pmid="31234567", title="A paper"))
+
+    assert dedup.is_duplicate(
+        SimpleNamespace(document_id="doi:10.1/a", pmid="31234567", title="A paper")
+    ) is True
+
+
+# ── Cache replay for the new sources ──────────────────────────────────────────
+
+
+def test_documents_from_cached_discovery_replays_only_what_the_run_included(tmp_path) -> None:
+    cache = make_cache(tmp_path, source="discovery_search")
+    cache.append_jsonl(
+        "raw/discovery/candidates.jsonl",
+        [
+            {
+                "doi": "10.1/kept",
+                "pmid": "111",
+                "title": "Kept",
+                "relevance": "studies",
+                "doc_type": "primary",
+                "is_review": False,
+                "is_retracted": False,
+                "found_in": ["pubmed"],
+            },
+            {
+                "doi": "10.1/dropped",
+                "pmid": "222",
+                "title": "Off topic",
+                "relevance": "off_topic",
+                "doc_type": "primary",
+                "is_review": False,
+                "is_retracted": False,
+                "found_in": ["crossref"],
+            },
+            {
+                "doi": "10.1/retracted",
+                "pmid": "333",
+                "title": "Retracted",
+                "relevance": "studies",
+                "doc_type": "primary",
+                "is_review": False,
+                "is_retracted": True,
+                "found_in": ["pubmed"],
+            },
+        ],
+    )
+
+    docs = list(documents_from_cached_discovery(cache))
+
+    assert [doc.document_id for doc in docs] == ["pmid:111"]
+    assert docs[0].source == "discovery"
+
+
+def test_documents_from_cached_datasheet_fulltext_rebuilds_sections(tmp_path) -> None:
+    from pipelines.acquisition.cache_layout import safe_stem
+    from pipelines.discovery.canonicalize import Candidate
+    from pipelines.discovery.manifest_csv import write_manifest_csv
+
+    cache = make_cache(tmp_path, source="datasheet_fulltext")
+    candidate = Candidate(
+        doi="10.1/a", pmid="111", title="A paper", relevance="studies", doc_type="primary"
+    )
+    cache.write_bytes(
+        "raw/datasheet/manifest.csv",
+        write_manifest_csv([candidate], included_dois={"10.1/a"}).encode("utf-8"),
+    )
+    cache.write_bytes(
+        f"raw/datasheet/fulltext/{safe_stem('10.1/a')}.json",
+        json.dumps(
+            {
+                "source_format": "xml",
+                "title": "A paper",
+                "abstract": "Abstract text.",
+                "warnings": [],
+                "sections": [{"label": "methods", "heading": "Methods", "text": "Grown in YPD."}],
+            }
+        ).encode("utf-8"),
+    )
+
+    docs = list(documents_from_cached_datasheet_fulltext(cache))
+
+    assert [doc.document_id for doc in docs] == ["pmid:111"]
+    assert [section["label"] for section in docs[0].sections] == ["methods"]
+
+
+def test_cached_full_text_without_a_manifest_row_is_skipped(tmp_path) -> None:
+    """The stem is a one-way hash: a payload with no row cannot be attributed to
+    a paper, and an uncitable document is worse than a missing one."""
+    from pipelines.discovery.manifest_csv import write_manifest_csv
+
+    cache = make_cache(tmp_path, source="datasheet_fulltext")
+    cache.write_bytes("raw/datasheet/manifest.csv", write_manifest_csv([]).encode("utf-8"))
+    cache.write_bytes(
+        "raw/datasheet/fulltext/orphan-0123456789.json",
+        json.dumps({"source_format": "xml", "sections": [], "warnings": []}).encode("utf-8"),
+    )
+
+    assert list(documents_from_cached_datasheet_fulltext(cache)) == []
+
+
+def test_documents_from_cached_datasheet_rows_reproduces_the_live_ids(tmp_path) -> None:
+    from pathlib import Path
+
+    from pipelines.ingestion.datasheet_rows import row_to_document
+
+    cache = make_cache(tmp_path, source="datasheet_rows")
+    row = {"Article": "A paper", "Compounds": "citric acid", "doi": "10.1/a", "year": "2020"}
+    cache.append_jsonl(
+        "raw/datasheet/rows/rows.jsonl",
+        [{"row_index": 0, "template": "default", "source_file": "rows.csv", "row": row}],
+    )
+
+    docs = list(documents_from_cached_datasheet_rows(cache))
+    live = row_to_document(row, row_index=0, template_name="default", source_path=Path("rows.csv"))
+
+    assert len(docs) == 1
+    # A replay that minted new ids would double every row in the corpus.
+    assert docs[0].document_id == live.document_id
+    assert "citric acid" in docs[0].full_text

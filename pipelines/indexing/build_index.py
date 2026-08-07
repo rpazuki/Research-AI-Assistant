@@ -49,11 +49,16 @@ import asyncpg
 from pipelines.ingestion.pubmed_abstract import PubMedAbstractIngester
 from pipelines.ingestion.pdf_local import LocalPDFIngester
 from pipelines.ingestion.pmc_fulltext import PMCFullTextIngester
+from pipelines.ingestion.discovery_search import DiscoverySearchIngester
+from pipelines.ingestion.datasheet_fulltext import DatasheetFullTextIngester
+from pipelines.ingestion.datasheet_manifest import DatasheetManifestIngester
+from pipelines.ingestion.datasheet_rows import DatasheetRowsIngester
 from pipelines.ingestion.lab_sources import (
     LocalTableCollectionIngester,
     LocalTextCollectionIngester,
 )
 from pipelines.corpus_cache import (
+    PARSER_VERSIONS,
     CorpusCache,
     CorpusManifest,
     write_acquisition_queue,
@@ -69,6 +74,48 @@ logger = logging.getLogger(__name__)
 LOCAL_TEXT_SOURCES = {"lab_protocols"}
 LOCAL_TABLE_SOURCES = {"eln_lims", "inventories", "omics_summaries"}
 LOCAL_LAB_SOURCES = LOCAL_TEXT_SOURCES | LOCAL_TABLE_SOURCES
+
+DATASHEET_SOURCES = {"datasheet_manifest", "datasheet_fulltext", "datasheet_rows"}
+
+# Sources whose document is a row about a paper, not the paper itself. See the
+# deduplication note in build_index().
+ROW_SCOPED_SOURCES = {"datasheet_rows"}
+
+# Which text of a document each source can offer the chunker. Stated per source
+# rather than sniffed from the name: `"abstract" in source` silently filed
+# `discovery_search` and every `datasheet_*` key under fulltext, and a fulltext
+# chunker on an abstract-only document quietly falls back (normalizer.py:71-77)
+# with a chunk_type that then lies about where the text came from.
+SOURCE_CHUNK_MODES: dict[str, str] = {
+    "pubmed_abstract": "abstract",
+    "discovery_search": "abstract",
+    "datasheet_manifest": "abstract",
+    "pmc_fulltext": "fulltext",
+    "pdf": "fulltext",
+    "datasheet_fulltext": "fulltext",
+    "datasheet_rows": "fulltext",
+    **{source: "fulltext" for source in LOCAL_LAB_SOURCES},
+}
+
+
+def chunk_mode_for_source(source: str) -> str:
+    """Chunk mode for an ingester key, defaulting to fulltext for unknown sources."""
+    return SOURCE_CHUNK_MODES.get(source, "fulltext")
+
+
+def chunks_for_document(chunker: Chunker, doc: NormalizedDocument) -> list:
+    """Section-aware where the source knows its sections, whole-document otherwise."""
+    sections = [
+        (section.get("label"), section.get("text") or "")
+        for section in (doc.sections or [])
+        if (section.get("text") or "").strip()
+    ]
+    if not sections:
+        return chunker.chunk_document(doc)
+
+    if doc.title:
+        sections.insert(0, ("title", doc.title))
+    return chunker.chunk_sections(doc.document_id, sections)
 
 ProgressCallback = Callable[[str, dict[str, Any] | None], Any]
 
@@ -86,26 +133,48 @@ async def notify_progress(
 
 
 async def upsert_document(conn, doc: NormalizedDocument, manifest_id: uuid.UUID) -> uuid.UUID:
-    """Upsert a document and return its database UUID."""
+    """Upsert a document and return its database UUID.
+
+    The conflict clause is deliberately asymmetric. Text fields are overwritten,
+    because a later run is by definition the fresher extraction. The bibliographic
+    sidecar is merged with COALESCE instead: one paper legitimately arrives from
+    several sources, and an abstract-only re-ingest that knows nothing about the
+    publisher must not erase what discovery already established. `is_retracted`
+    is OR-ed for the same reason in the direction that matters — a retraction is
+    never withdrawn by a source that simply did not check.
+    """
     d = doc.to_db_dict()
     row = await conn.fetchrow(
         """
         INSERT INTO documents
             (manifest_id, document_id, source, title, abstract, full_text, authors,
              journal, publication_date, year, doi, pmid, pmc_id, mesh_terms, keywords,
-             url, license, ingested_at, metadata)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+             url, license, ingested_at, metadata,
+             publisher, oa_status, doc_type, is_review, is_retracted, preprint_of_doi,
+             full_text_source, access_route)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+                $20,$21,$22,$23,$24,$25,$26,$27)
         ON CONFLICT (document_id) DO UPDATE SET
-            title = EXCLUDED.title,
-            abstract = EXCLUDED.abstract,
-            full_text = EXCLUDED.full_text,
-            ingested_at = EXCLUDED.ingested_at
+            title = COALESCE(EXCLUDED.title, documents.title),
+            abstract = COALESCE(EXCLUDED.abstract, documents.abstract),
+            full_text = COALESCE(EXCLUDED.full_text, documents.full_text),
+            ingested_at = EXCLUDED.ingested_at,
+            publisher = COALESCE(EXCLUDED.publisher, documents.publisher),
+            oa_status = COALESCE(EXCLUDED.oa_status, documents.oa_status),
+            doc_type = COALESCE(EXCLUDED.doc_type, documents.doc_type),
+            is_review = documents.is_review OR EXCLUDED.is_review,
+            is_retracted = documents.is_retracted OR EXCLUDED.is_retracted,
+            preprint_of_doi = COALESCE(EXCLUDED.preprint_of_doi, documents.preprint_of_doi),
+            full_text_source = COALESCE(EXCLUDED.full_text_source, documents.full_text_source),
+            access_route = COALESCE(EXCLUDED.access_route, documents.access_route)
         RETURNING id
         """,
         manifest_id, d["document_id"], d["source"], d["title"], d["abstract"],
         d["full_text"], json.dumps(d["authors"]), d["journal"], d["publication_date"],
         d["year"], d["doi"], d["pmid"], d["pmc_id"], d["mesh_terms"],
         d["keywords"], d["url"], d["license"], d["ingested_at"], json.dumps(d["metadata"]),
+        d["publisher"], d["oa_status"], d["doc_type"], d["is_review"], d["is_retracted"],
+        d["preprint_of_doi"], d["full_text_source"], d["access_route"],
     )
     return row["id"]
 
@@ -133,12 +202,13 @@ async def upsert_chunks_with_embeddings(
             """
             INSERT INTO document_chunks
                 (document_id, manifest_id, chunk_index, chunk_type, content,
-                 token_count, embedding_model, embedding)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8::vector)
+                 token_count, embedding_model, embedding, section_label)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8::vector,$9)
             ON CONFLICT DO NOTHING
             """,
             doc_db_id, manifest_id, chunk.chunk_index, chunk.chunk_type,
             chunk.content, chunk.token_count, embedding_model_name, embedding_str,
+            getattr(chunk, "section_label", None),
         )
 
 
@@ -207,6 +277,112 @@ def documents_from_cached_pmc_xml(cache: CorpusCache) -> Iterator[NormalizedDocu
         yield doc
 
 
+def documents_from_cached_discovery(cache: CorpusCache) -> Iterator[NormalizedDocument]:
+    """Replay a discovery run from its cached candidates, with no network calls.
+
+    The inclusion filter is not re-applied here: `raw/discovery/candidates.jsonl`
+    holds every candidate including the ones that were judged off-topic, and the
+    manifest CSV next to it records why. Re-deciding inclusion at replay time
+    would silently change the corpus without changing the run that produced it,
+    so only the rows the original run kept are replayed — those are exactly the
+    ones written to `normalized/documents.jsonl`, which `documents_from_cache`
+    prefers. This path is the fallback for a cache that has raw records only.
+    """
+    from pipelines.discovery.discover import DiscoveryResult, included_candidates
+    from pipelines.ingestion.discovery_search import (
+        candidate_from_cache_record,
+        candidate_to_document,
+    )
+
+    candidates = [
+        candidate_from_cache_record(record)
+        for record in cache.read_jsonl("raw/discovery/candidates.jsonl")
+    ]
+    # Reuse the live path's filter rather than restating it: an inclusion rule
+    # that exists in two places is an inclusion rule that will disagree with
+    # itself. Defaults only — replay must not widen what the run decided.
+    for candidate in included_candidates(DiscoveryResult(candidates=candidates)):
+        doc = candidate_to_document(candidate)
+        cache.write_document(
+            doc,
+            raw_asset_path="raw/discovery/candidates.jsonl",
+            access_status="metadata-only",
+            parser_version=PARSER_VERSIONS["discovery"],
+        )
+        yield doc
+
+
+def documents_from_cached_datasheet_manifest(cache: CorpusCache) -> Iterator[NormalizedDocument]:
+    """Replay a manifest-driven run from whatever it fetched.
+
+    The ingester delegates to the PMC and PubMed ingesters, so its raw assets are
+    theirs — there is nothing datasheet-shaped to re-parse here.
+    """
+    yield from documents_from_cached_pmc_xml(cache)
+    yield from documents_from_cached_pubmed_xml(cache)
+
+
+def documents_from_cached_datasheet_fulltext(cache: CorpusCache) -> Iterator[NormalizedDocument]:
+    """Rebuild section-labelled documents from the copied text payloads."""
+    import json as _json
+
+    from pipelines.acquisition.cache_layout import safe_stem
+    from pipelines.ingestion.datasheet_fulltext import (
+        FULLTEXT_CACHE_DIR,
+        MANIFEST_COPY_PATH,
+        text_document,
+    )
+    from pipelines.ingestion.datasheet_manifest import read_manifest, select_rows
+
+    manifest_path = cache.root / MANIFEST_COPY_PATH
+    rows = {
+        safe_stem(row.identifier): row
+        for row in select_rows(read_manifest(manifest_path))
+        if row.identifier
+    }
+
+    for text_path in sorted((cache.root / FULLTEXT_CACHE_DIR).glob("*.json")):
+        row = rows.get(text_path.stem)
+        if row is None:
+            # The stem is a one-way hash of an identifier, so a payload with no
+            # manifest row cannot be attributed to a paper. Indexing it would
+            # produce an uncitable document.
+            logger.warning("cached full text has no manifest row: %s", text_path.name)
+            continue
+        payload = _json.loads(text_path.read_text(encoding="utf-8"))
+        doc = text_document(row, payload, asset_path=None)
+        cache.write_document(
+            doc,
+            raw_asset_path=cache.relative_path(text_path),
+            access_status=doc.metadata["access_status"],
+            parser_version=PARSER_VERSIONS["datasheet_fulltext"],
+        )
+        yield doc
+
+
+def documents_from_cached_datasheet_rows(cache: CorpusCache) -> Iterator[NormalizedDocument]:
+    from pipelines.ingestion.datasheet_rows import ROWS_CACHE_PATH, row_to_document
+
+    for record in cache.read_jsonl(ROWS_CACHE_PATH):
+        doc = row_to_document(
+            dict(record.get("row") or {}),
+            row_index=int(record.get("row_index", 0)),
+            template_name=str(record.get("template", "default")),
+            # The original filename, not the cache path: it seeds the row's
+            # document_id, so replay must pass what the live run passed.
+            source_path=Path(str(record.get("source_file") or ROWS_CACHE_PATH)),
+        )
+        if doc is None:
+            continue
+        cache.write_document(
+            doc,
+            raw_asset_path=ROWS_CACHE_PATH,
+            access_status=doc.metadata.get("access_status", "internal"),
+            parser_version=PARSER_VERSIONS["datasheet_rows"],
+        )
+        yield doc
+
+
 def documents_from_cached_pdf_text(cache: CorpusCache) -> Iterator[NormalizedDocument]:
     for text_path in sorted((cache.root / "raw/pdf/extracted").glob("*.txt")):
         content_hash = text_path.stem
@@ -263,6 +439,14 @@ def documents_from_cache(cache: CorpusCache, source: str) -> list[NormalizedDocu
         documents = list(documents_from_cached_pubmed_xml(cache))
     elif source == "pmc_fulltext":
         documents = list(documents_from_cached_pmc_xml(cache))
+    elif source == "discovery_search":
+        documents = list(documents_from_cached_discovery(cache))
+    elif source == "datasheet_manifest":
+        documents = list(documents_from_cached_datasheet_manifest(cache))
+    elif source == "datasheet_fulltext":
+        documents = list(documents_from_cached_datasheet_fulltext(cache))
+    elif source == "datasheet_rows":
+        documents = list(documents_from_cached_datasheet_rows(cache))
     elif source == "pdf":
         documents = list(documents_from_cached_pdf_text(cache))
     elif source in LOCAL_LAB_SOURCES:
@@ -409,7 +593,7 @@ async def build_index(
     chunker = Chunker(
         chunk_size=chunk_cfg.get("chunk_size", 512),
         chunk_overlap=chunk_cfg.get("chunk_overlap", 64),
-        mode="abstract" if "abstract" in source else "fulltext",
+        mode=chunk_mode_for_source(source),
     )
     embedding_batch_size = embedding_batch_size_for_source(cfg, source)
     progress_interval_documents = int(runtime_cfg.get("progress_interval_documents", 100))
@@ -446,6 +630,14 @@ async def build_index(
                 retry_backoff_max_s=cfg.get("pmc", {}).get("http", {}).get("retry_backoff_max_s", 30.0),
                 cache=cache,
             ).fetch()
+        elif source == "discovery_search":
+            documents = DiscoverySearchIngester.from_config(config_path, cache=cache).fetch()
+        elif source == "datasheet_manifest":
+            documents = DatasheetManifestIngester.from_config(config_path, cache=cache).fetch()
+        elif source == "datasheet_fulltext":
+            documents = DatasheetFullTextIngester.from_config(config_path, cache=cache).fetch()
+        elif source == "datasheet_rows":
+            documents = DatasheetRowsIngester.from_config(config_path, cache=cache).fetch()
         elif source == "pdf":
             documents = LocalPDFIngester(
                 pdf_dir=cfg.get("pdf", {}).get("dir", "./data/pdfs"),
@@ -488,11 +680,17 @@ async def build_index(
     chunk_count = 0
     dedup_cfg = cfg.get("deduplication", {})
     dedup_enabled = bool(dedup_cfg.get("enabled", True))
+    # Row-scoped sources describe one paper many times on purpose: a datasheet
+    # holds a row per product and per condition, all sharing the paper's PMID and
+    # title. Matching on either would keep the first row and silently drop the
+    # rest — the exact data the source exists to make answerable. Their identity
+    # is the row hash in document_id, which still dedupes an accidental re-read.
+    row_scoped = source in ROW_SCOPED_SOURCES
     deduplicator = Deduplicator(
         title_threshold=float(dedup_cfg.get("title_threshold", 0.92)),
-        match_on_pmid=bool(dedup_cfg.get("match_on_pmid", True)),
+        match_on_pmid=bool(dedup_cfg.get("match_on_pmid", True)) and not row_scoped,
         match_on_document_id=bool(dedup_cfg.get("match_on_document_id", True)),
-        match_on_title=bool(dedup_cfg.get("match_on_title", True)),
+        match_on_title=bool(dedup_cfg.get("match_on_title", True)) and not row_scoped,
     )
 
     if dedup_enabled and from_date is not None and source == "pubmed_abstract":
@@ -513,7 +711,7 @@ async def build_index(
                 processed_docs.append(doc)
 
             # Chunk
-            chunks = cached_chunks.get(doc.document_id) or chunker.chunk_document(doc)
+            chunks = cached_chunks.get(doc.document_id) or chunks_for_document(chunker, doc)
             if not chunks:
                 continue
             if cache is not None and doc.document_id not in cached_chunks:

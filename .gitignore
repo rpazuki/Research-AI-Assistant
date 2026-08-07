@@ -38,6 +38,10 @@ pipelines/data/checkpoints/
 # Docker
 *.log
 
+# Ops artifacts written on the deployment VM by scripts/: deploy audit log,
+# support bundles, the deploy lock. Machine-local, never committed.
+ops/
+
 .DS_Store
 **/.DS_Store
 nginx/

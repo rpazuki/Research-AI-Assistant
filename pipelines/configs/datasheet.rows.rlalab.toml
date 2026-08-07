@@ -1,0 +1,27 @@
+# RLALab corpus configuration — extracted datasheet rows as documents.
+#
+# One document per row, so a question about a strain, titre or carbon source is
+# answered from the row that reports it and cites that row's paper.
+#
+# Input is any CSV/TSV whose header matches the datasheet template: the phase-E
+# export when it exists, and until then the curators' spreadsheet
+# (docs/Yarrowia lipolytica Datasheet(2016-2026).xlsx) saved as CSV.
+
+[corpus]
+name            = "rlalab-datasheet-rows-v1"
+source          = "datasheet_rows"
+embedding_model = "pubmedbert"
+
+[datasheet]
+rows_csv      = "./data/datasheets/yarrowia-2016-2026.csv"
+template_name = "default"
+
+# Curated internal material: recorded on every cached asset and normalized record.
+access_status    = "internal"
+sensitivity      = "internal"
+retention_policy = "internal-project-storage"
+
+[chunking]
+# A row is short. A chunk larger than the row simply holds one row.
+chunk_size    = 512
+chunk_overlap = 64

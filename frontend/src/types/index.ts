@@ -736,6 +736,7 @@ export interface DatasheetRunSummary {
   candidate_count: number | null;
   progress_message: string | null;
   error: string | null;
+  cache_path: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

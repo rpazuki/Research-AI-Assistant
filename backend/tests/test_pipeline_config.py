@@ -62,6 +62,52 @@ def test_pipeline_defaults_merge_with_corpus_toml_and_environment(monkeypatch, t
     assert config["indexing"]["embedding_batch_size_by_source"]["pubmed_abstract"] == 32
 
 
+def test_discovery_contact_addresses_come_from_the_environment(monkeypatch, tmp_path) -> None:
+    """Contact addresses are .env material, never committed config: a shipped
+    TOML with someone's address in it is the kind of thing that gets copied."""
+    defaults_path = tmp_path / "pipeline.defaults.yaml"
+    defaults_path.write_text(
+        "defaults:\n  discovery:\n    max_records_per_source: 10\nenvironments:\n  local: {}\n",
+        encoding="utf-8",
+    )
+    corpus_path = tmp_path / "corpus.toml"
+    corpus_path.write_text(
+        '[corpus]\nname = "c"\nsource = "discovery_search"\n\n'
+        '[discovery]\norganism_terms = ["Yarrowia"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PIPELINE_CONFIG_FILE", str(defaults_path))
+    monkeypatch.delenv("RLALAB_ENV", raising=False)
+    monkeypatch.setenv("NCBI_EMAIL", "lab@example.com")
+    monkeypatch.setenv("NCBI_API_KEY", "key-123")
+    monkeypatch.setenv("CROSSREF_MAILTO", "crossref@example.com")
+    monkeypatch.setenv("OPENALEX_MAILTO", "openalex@example.com")
+
+    config = load_pipeline_config(corpus_path)
+
+    assert config["discovery"]["ncbi_email"] == "lab@example.com"
+    assert config["discovery"]["ncbi_api_key"] == "key-123"
+    assert config["discovery"]["crossref_mailto"] == "crossref@example.com"
+    assert config["discovery"]["openalex_mailto"] == "openalex@example.com"
+    assert config["discovery"]["organism_terms"] == ["Yarrowia"]
+    assert config["discovery"]["max_records_per_source"] == 10
+
+
+def test_shipped_configs_carry_no_contact_addresses() -> None:
+    from pathlib import Path
+
+    from pipelines.corpus_cache import load_toml
+
+    config_dir = Path(__file__).resolve().parents[2] / "pipelines" / "configs"
+    for path in config_dir.glob("*.toml"):
+        text = path.read_text()
+        assert "@" not in text or "mailto" not in text.lower(), path.name
+        discovery = load_toml(path).get("discovery", {})
+        assert "crossref_mailto" not in discovery
+        assert "openalex_mailto" not in discovery
+        assert "ncbi_api_key" not in discovery
+
+
 def test_pipelines_and_backend_agree_on_the_local_database_default() -> None:
     """The `local` database address is the one fact that must be stated twice.
 

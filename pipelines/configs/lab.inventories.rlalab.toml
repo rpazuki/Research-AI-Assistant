@@ -1,5 +1,9 @@
+# RLALab corpus configuration — internal inventory exports (CSV/TSV).
+
 [corpus]
-source = "inventories"  # or "eln_lims" / "omics_summaries"
+name            = "rlalab-inventories-v1"
+source          = "inventories"  # or "eln_lims" / "omics_summaries"
+embedding_model = "pubmedbert"
 
 [inventories]
 dir = "./data/inventories"

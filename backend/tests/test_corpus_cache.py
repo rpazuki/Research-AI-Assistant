@@ -103,6 +103,55 @@ def test_chunk_cache_record_round_trip() -> None:
     assert restored == chunk
 
 
+def test_chunk_cache_record_keeps_the_section_label() -> None:
+    """A local-only rebuild must not silently drop section-level citation."""
+    chunk = Chunk(
+        document_id="pmid:123",
+        chunk_index=0,
+        chunk_type="fulltext",
+        content="Strains were grown.",
+        section_label="methods",
+    )
+
+    restored = chunk_from_cache_record(
+        chunk_to_cache_record(chunk, embedding_model="pubmedbert", source_run_id="run")
+    )
+
+    assert restored.section_label == "methods"
+    assert restored == chunk
+
+
+def test_document_cache_record_keeps_the_bibliographic_sidecar_and_sections() -> None:
+    doc = NormalizedDocument(
+        document_id="doi:10.1/a",
+        source="pmc",
+        title="A title",
+        publisher="Elsevier",
+        oa_status="gold",
+        doc_type="primary",
+        is_review=True,
+        is_retracted=True,
+        preprint_of_doi="10.1/vor",
+        full_text_source="pmc_jats",
+        access_route="pmc_oa",
+        sections=[{"label": "methods", "heading": "Methods", "text": "Grown in YPD."}],
+    )
+
+    restored = document_from_cache_record(
+        document_to_cache_record(doc, source_run_id="run", access_status="open-access")
+    )
+
+    assert restored.publisher == "Elsevier"
+    assert restored.oa_status == "gold"
+    assert restored.doc_type == "primary"
+    assert restored.is_review is True
+    assert restored.is_retracted is True
+    assert restored.preprint_of_doi == "10.1/vor"
+    assert restored.full_text_source == "pmc_jats"
+    assert restored.access_route == "pmc_oa"
+    assert restored.sections == doc.sections
+
+
 def test_full_text_candidates_include_pmcid_and_doi_routes() -> None:
     doc = NormalizedDocument(
         document_id="pmid:123",

@@ -18,11 +18,17 @@ commands and operational details, see `docs/ingestion-guide.md`.
 | PubMed         | PMC full text  | Local PDFs     | Lab exports |
 | abstracts      | JATS/XML       | PDF -> text    | text/tables |
 +-------+--------+-------+--------+-------+--------+-----+------+
+| Discovery search             | Datasheet run                  |
+| pubmed + europepmc +         | manifest worklist / fetched    |
+| crossref + openalex          | full text / curated rows       |
++-------+--------+-------+--------+-------+--------+-----+------+
         |                |                |              |
         v                v                v              v
  raw/pubmed/       raw/pmc/xml/     raw/pdf/        raw/lab/
  efetch/*.xml      *.xml            originals/      originals/
                                     extracted/      extracted/
+ raw/discovery/    raw/datasheet/
+ candidates.jsonl  fulltext/*.json, rows/rows.jsonl
         \                |                |              /
          \               |                |             /
           v              v                v            v
@@ -101,6 +107,10 @@ Side workflow C: cache validation and local-only re-indexing
 |---|---|---|---|
 | Corpus config | Select the source, corpus name, embedding model, chunking, and source-specific settings. | TOML files in `pipelines/configs/*.toml`; environment variables such as `DATABASE_URL`, `NCBI_EMAIL`, and `NCBI_API_KEY`. | Runtime settings copied to `config/corpus.toml` inside the cache. |
 | Cache layout | Preserve a portable, auditable copy of the run or cumulative corpus artifacts. | A new timestamped run, or an existing cache passed with `--cache`. | `data/corpora/<corpus_name>/<run_id-or-cumulative>/`, including `manifest.json`. |
+| Multi-source discovery search | Reach the literature PubMed does not index by searching PubMed, Europe PMC, Crossref and OpenAlex together and indexing the merged, relevance-judged candidates. | Organism and product terms, year range, source list. | Candidates in `raw/discovery/candidates.jsonl`; audit CSV in `reports/discovery_manifest.csv`; normalized records in `normalized/documents.jsonl`. |
+| Datasheet manifest worklist | Index the papers a finished datasheet run judged relevant, without re-searching. | A run's `discovery/manifest.csv`. | PMC XML and PubMed XML through the existing ingesters; normalized records in `normalized/documents.jsonl`. |
+| Datasheet full text | Index the full text a datasheet run's acquisition ladder already fetched, section labels intact. No network calls. | A run's `fulltext/*.json` plus its manifest. | Copies in `raw/datasheet/fulltext/*.json`; section-labelled chunks in `chunks/chunks.jsonl`. |
+| Datasheet rows | Make curated datasheet rows answerable and citable, one document per row. | A CSV/TSV matching the datasheet template. | Copy in `raw/datasheet/rows/`; row records in `raw/datasheet/rows/rows.jsonl`; normalized records in `normalized/documents.jsonl`. |
 | PubMed abstract ingestion | Build broad literature coverage from PubMed metadata and abstracts. | PubMed query, date range, optional `--from-date` or `--year`. | Raw XML in `raw/pubmed/efetch/*.xml`; normalized JSONL in `normalized/documents.jsonl`; asset provenance in `assets/asset_manifest.jsonl`. |
 | PMC full-text ingestion | Fetch reusable full-text JATS/XML for articles available in PubMed Central. | PMCID list, PMCID file, or `from_cached_pubmed_documents = true` using cached PubMed records. | Raw JATS/XML in `raw/pmc/xml/*.xml`; normalized full-text records in `normalized/documents.jsonl`; errors such as unavailable OAI XML in `normalized/documents.errors.jsonl`. |
 | Local PDF ingestion | Register and extract locally available PDFs for indexing. | A configured PDF directory. | Originals in `raw/pdf/originals/*.pdf`; extracted text in `raw/pdf/extracted/*.txt`; normalized records and extraction metadata in `normalized/documents.jsonl`. |
