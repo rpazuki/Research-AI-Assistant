@@ -374,3 +374,86 @@ row hash), which still catches an accidental re-read.
   A scratch database (`CREATE DATABASE`, `alembic upgrade head`, run, drop) is cheap and catches
   the whole class: this same pass verified the COALESCE upsert clause, `section_label` reaching
   `document_chunks`, and that a `--local-only` replay does not duplicate documents.
+
+---
+
+## A disabled feature must not depend on what the enabled path needs
+
+**Incident:** phase D defaults to a dry run — it counts tokens and reports projected
+cost without calling the model. The worker still built the LLM provider before
+invoking it, so on a machine with no `ANTHROPIC_API_KEY` every datasheet run failed
+at a phase that was deliberately not going to call anything. The test suite caught
+it, but only because a round-1 test drove the worker end to end.
+
+**Root cause:** the gate was checked *inside* the phase while its dependencies were
+resolved *outside*. The off-path inherited every requirement of the on-path.
+
+**Fix:** resolve the provider optionally when extraction is disabled (`None` →
+character-estimate tokens), and require it only when it is enabled. `run_extraction_phase`
+also treats `provider is None` as a dry run, so no caller can reach the live path
+without one.
+
+**Prevention:**
+- When adding a feature flag, trace what the *disabled* path constructs, imports and
+  validates. A default-off feature that needs a key, a network route, or a schema to
+  stay switched off is not really off.
+- Guard-then-build, not build-then-guard: the same rule that keeps `build_extraction_schema`
+  out of the dry-run path, where a template with no columns would otherwise fail a run
+  that was only going to report a projection.
+
+---
+
+## A blanket-matching test fake answers the *next* query with the wrong entity
+
+**Incident:** `tests/test_datasheet_extractor.py` used a fake async session whose
+`execute()` returned the run's candidates for *any* select. Adding a second query to
+`plan_extraction` — the extraction-cache lookup — meant the fake handed a list of
+`DatasheetCandidate` objects to code expecting cache entries, and the failure surfaced
+as `AttributeError: 'SimpleNamespace' object has no attribute 'cells'` inside the
+cache module, several frames from the fake that caused it.
+
+**Root cause:** the fake encoded "there is only one select in this code path", which
+was true when it was written and is exactly the kind of assumption new code breaks.
+
+**Fix:** dispatch on `statement.column_descriptions[0]["entity"]`, and honour the
+cache lookup's `template_version` / `model` predicates from `statement.compile().params`
+rather than matching on the hash alone — the property under test is that the key is all
+three fields, and a fake that ignored two of them would pass whatever the code did.
+
+**Prevention:**
+- A fake session must dispatch on what is being queried, not return one canned answer.
+  `is_select` / `is_update` / `is_insert` / `is_delete` and `column_descriptions` are
+  enough to route without reimplementing SQL.
+- When a fake stands in for a predicate that is the point of the feature (a cache key,
+  a tenancy filter), model that predicate in the fake or the test proves nothing.
+- Fakes cannot check what only the database enforces. The `ON CONFLICT DO UPDATE` upsert
+  and the `claim_next_run` throttle were both verified against a scratch database
+  (`CREATE DATABASE` → `alembic upgrade head` → exercise → `downgrade` → `DROP`), which
+  is where a wrong constraint name or an inverted timestamp predicate actually shows up.
+
+---
+
+## A long provider call inside a shared worker job starves the other queue
+
+**Incident:** phase D submitted an Anthropic batch and then polled it in a `while`
+loop inside `run_datasheet_job`. Batches take 1–24 hours. The same process serves the
+ingestion queue on purpose (per-host rate limits are only enforceable if one process
+owns them), so a single live extraction run would have stalled every interactive
+ingestion job for as long as its batch took — and the batch id existed only as a local
+variable, so restarting the "hung" worker orphaned a batch that was already being billed.
+
+**Root cause:** treating a remote asynchronous job as a synchronous call. The wait was
+modelled as control flow in one process instead of as state on the row.
+
+**Fix:** submitting records `extraction_batch_id` on the run and returns; the run goes to
+`awaiting_batch`; the claim query also takes parked runs whose `extraction_batch_polled_at`
+is older than the poll interval; collection polls **once** and re-parks. A still-processing
+batch reports "no work done" so the loop sleeps rather than spinning on the same run.
+
+**Prevention:**
+- If an external job can outlive one poll interval, its identifier belongs in a column
+  before the process can die — and the wait belongs in the scheduler, not in a loop.
+- Any wait inside a job on a shared worker is a wait for every other queue that worker
+  serves. Ask what else stops while this runs.
+- Both halves of a throttle are load-bearing: widening the claim query without the
+  "due a poll" predicate turns parking into a hot loop against the provider's API.

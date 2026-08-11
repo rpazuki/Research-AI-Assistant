@@ -199,6 +199,11 @@ class DatasheetRunCreate(BaseModel):
     year_from: int | None = Field(default=None, ge=1500, le=2100)
     year_to: int | None = Field(default=None, ge=1500, le=2100)
     template_name: str = Field(default="rlalab-datasheet-v1", max_length=200)
+    # How far the run should go. 'discovery' stops after the manifest, which is how
+    # a curator reviews what was found before anything is fetched or extracted;
+    # 'export' (the default) goes the whole way. Reaching extraction still only
+    # produces a cost projection unless DATASHEET_EXTRACTION_ENABLED is set.
+    stop_after_phase: Literal["discovery", "acquisition", "export"] = "export"
     sources: list[str] = Field(default_factory=list)
     max_records_per_source: int = Field(default=6000, ge=1, le=20000)
     include_mentions: bool = False
@@ -219,8 +224,12 @@ class DatasheetRunCreate(BaseModel):
 class DatasheetRunSummary(BaseModel):
     id: uuid.UUID
     name: str
+    # queued | running | awaiting_batch | cancel_requested | succeeded | failed |
+    # cancelled. `awaiting_batch` is a parked run, not a stalled one: its extraction
+    # batch is with the provider and the worker is serving other work meanwhile.
     status: str
     phase: str | None = None
+    stop_after_phase: str | None = None
     seed_kind: str
     organism_name: str | None = None
     organism_taxid: int | None = None
@@ -249,7 +258,20 @@ class DatasheetRunDetail(DatasheetRunSummary):
     candidate_counts: dict[str, int] = Field(default_factory=dict)
     discovery_summary: dict[str, Any] | None = None
     acquisition_summary: dict[str, Any] | None = None
+    # Present once phase D has run. Carries `dry_run`, so the UI can say the run
+    # reported a projection and stopped rather than showing an empty datasheet.
+    extraction_summary: dict[str, Any] | None = None
     acquired_count: int | None = None
+    extracted_count: int | None = None
+    row_count: int = 0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cached_tokens: int | None = None
+    # Set while a batch is outstanding. Surfaced so the run page can say which batch
+    # a parked run is waiting on — the id is what makes an unexpected charge, or an
+    # orphaned batch, traceable at all.
+    extraction_batch_id: str | None = None
+    extraction_batch_submitted_at: datetime | None = None
 
 
 class DatasheetCandidateResponse(BaseModel):
@@ -274,6 +296,11 @@ class DatasheetCandidateResponse(BaseModel):
     relevance_reason: str | None = None
     acquisition_status: str
     acquisition_route: str | None = None
+    # extracted | cached | refused | failed | no_text | over_cap, or null when
+    # extraction has not looked at this paper. A failed paper has no datasheet row
+    # by design, so this is where its reason lives.
+    extraction_status: str | None = None
+    extraction_error: str | None = None
     dedupe_group: str | None = None
     # Suspicion recorded during discovery, never acted on: these rows share a title
     # but were kept separate, because merging two distinct works is worse than
@@ -281,3 +308,66 @@ class DatasheetCandidateResponse(BaseModel):
     possible_duplicate_of: list[str] = Field(default_factory=list)
     duplicate_evidence: str | None = None
     notes: str | None = None
+
+
+# ── Extraction (round 2) ──────────────────────────────────────────────────────
+
+class DatasheetRowResponse(BaseModel):
+    """One extracted paper.
+
+    `cells` is `{column_key: {value, confidence, evidence_quote, evidence_section,
+    source_tier}}` — the evidence travels with the value so a reviewer can judge a
+    cell without opening the paper. Kept as a free-form dict rather than a typed
+    model because the column set is data: an admin adding a column must not need a
+    schema change here.
+    """
+
+    id: uuid.UUID
+    candidate_id: uuid.UUID
+    title: str | None = None
+    cells: dict[str, Any] = Field(default_factory=dict)
+    # How much of the paper the extraction actually had, per row: fulltext |
+    # abstract | metadata | none. Reported so a thin row is visibly thin.
+    source_tier: str
+    extraction_model: str | None = None
+    template_version: int | None = None
+    review_status: str = "unreviewed"
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    doi: str | None = None
+    pmid: str | None = None
+    journal: str | None = None
+    publisher: str | None = None
+    year: int | None = None
+    oa_status: str | None = None
+    doc_type: str | None = None
+    is_review: bool = False
+    is_retracted: bool = False
+    acquisition_route: str | None = None
+    acquisition_status: str | None = None
+
+
+class DatasheetExtractionEstimate(BaseModel):
+    """What a real extraction pass would cost. Produced without sending anything."""
+
+    # False means a queued run will report this projection and stop. The flag is
+    # surfaced so the UI can say why nothing was extracted, rather than looking
+    # like a failure.
+    extraction_enabled: bool
+    papers: int
+    # Papers whose result is already in the extraction cache: they will produce rows
+    # without being sent, and are excluded from the projected cost below — the
+    # question a projection answers is "what will this cost me now".
+    cached: int = 0
+    to_extract: int = 0
+    input_tokens: int
+    assumed_output_tokens: int
+    # 'provider' when measured with the model's own tokeniser, 'estimated_from_chars'
+    # when no key was available — the difference matters at several hundred papers.
+    token_method: str
+    model: str
+    projected_cost_usd: float
+    skipped_no_text: int
+    skipped_over_cap: int
+    truncated: int
+    median_tokens_per_paper: int

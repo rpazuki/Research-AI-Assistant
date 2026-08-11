@@ -967,7 +967,8 @@ services:
 8. **Chunk embedding dimensions:** If you add an embedding model with different dimensions, you must either add a new vector column or a separate table. Mixing 768-dim and 384-dim vectors in the same column is not valid.
 9. **alembic autogenerate:** Will not detect vector column type changes automatically. Write those migrations by hand using `op.execute()`.
 10. **Full-text ingestion licensing:** PMC full text is only available for open-access articles. Always check `license` field and respect restrictions.
-11. **Async ORM serialization:** When returning ORM-backed response models in async routes, avoid response construction paths that trigger lazy relationship loading during Pydantic validation. Build nested response objects explicitly when necessary.
+11. **Sampling parameters are model-gated:** Claude 5 models reject `temperature`, `top_p` and `top_k` with a 400 rather than ignoring them. `AnthropicProvider.sampling_params()` decides per target model, so call sites keep passing `settings.llm_temperature` and `LLM_MODEL` can move between generations without a code change. Do not re-add an unconditional `temperature=` to a request builder.
+12. **Async ORM serialization:** When returning ORM-backed response models in async routes, avoid response construction paths that trigger lazy relationship loading during Pydantic validation. Build nested response objects explicitly when necessary.
 
 ---
 
@@ -1018,6 +1019,9 @@ Read `docs/evaluation-guidelines.md` before starting frontend polish — evaluat
 | `tests/test_discovery_search_ingester.py` | Candidate → document mapping, audit artifacts, `from_config` |
 | `tests/test_datasheet_ingesters.py` | Manifest parsing/selection, PMC→abstract fallback, section-labelled full text, row documents |
 | `tests/test_chunker.py` | Chunk splitting, overlap, section labels |
+| `tests/test_extraction_sections.py` | Section selection, budgeting, source tier |
+| `tests/test_datasheet_extractor.py` | Dry-run projection, extraction gate, batch keying, escalation cap, datasheet CSV |
+| `tests/test_anthropic_provider_extraction.py` | Structured-output request shape, cache breakpoint, batch result mapping |
 | `tests/test_eval_runner.py` | SSE stream parser |
 | `tests/test_pmc_fulltext.py` | PMC XML metadata/text extraction |
 | `tests/test_pubmed_ingester.py` | PubMed query builder, incremental checkpoint |

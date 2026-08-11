@@ -96,6 +96,34 @@ class Settings(BaseSettings):
     # Publisher TDM. The route is implemented but inert without a key.
     elsevier_tdm_key: str = ""
 
+    # ── Extraction (datasheet S5) ─────────────────────────────────────────
+    # Off by default, and deliberately so. Extraction is the only phase that
+    # sends paper text to Anthropic and the only phase that costs money; the
+    # owner clears that transfer once, explicitly, rather than a queued run
+    # doing it by default. With this false the pass still runs — it resolves
+    # candidates, counts tokens and reports projected cost — but stops before
+    # calling the model.
+    datasheet_extraction_enabled: bool = False
+    # Bulk pass. Sonnet 5 handles the great majority of cells; Opus 5 is kept for
+    # the ones it is unsure about, which is where the cost/quality trade actually
+    # bites (plan open item (c), settled 2026-08-07).
+    datasheet_extraction_model: str = "claude-sonnet-5"
+    datasheet_escalation_model: str = "claude-opus-5"
+    # Second pass over low-confidence and Not-reported cells, hard-capped so a
+    # poorly performing batch cannot silently multiply the bill.
+    datasheet_escalation_enabled: bool = True
+    datasheet_escalation_confidence: float = 0.6
+    datasheet_escalation_max_fraction: float = 0.10
+    # Batch API: half price, results in under an hour typically. Extraction is
+    # not latency-sensitive, so there is no reason to pay the synchronous rate.
+    datasheet_use_batch_api: bool = True
+    datasheet_batch_poll_interval_s: int = 60
+    # S4 measured a median of 8,350 tokens of selected sections per paper, so this
+    # cap is an outlier backstop rather than the normal path.
+    datasheet_max_section_tokens: int = 24_000
+    # Second ceiling, independent of cost projection: bounds a single run.
+    datasheet_max_papers_per_run: int = 1_000
+
     # ── RAG / Retrieval ───────────────────────────────────────────────────
     retrieval_vector_top_k: int = 10
     retrieval_lexical_top_k: int = 10

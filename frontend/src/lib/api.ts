@@ -9,6 +9,8 @@ import type {
   DatasheetTemplateDetail,
   DatasheetTemplateSummary,
   DatasheetCandidate,
+  DatasheetExtractionEstimate,
+  DatasheetRow,
   DatasheetRunCreate,
   DatasheetRunDetail,
   DatasheetRunSummary,
@@ -777,6 +779,21 @@ export async function cancelDatasheetRun(runId: string) {
   );
 }
 
+/**
+ * Re-queue a finished run at extraction, keeping its discovery and acquisition.
+ *
+ * For a fixed extraction hint or a corrected template: re-running discovery over
+ * thousands of upstream records and re-fetching every full text would change
+ * nothing. Papers whose prompt is unchanged come from the result cache, so only
+ * what the edit actually affected is sent again.
+ */
+export async function reextractDatasheetRun(runId: string) {
+  return apiFetch<DatasheetRunDetail>(
+    `/admin/datasheets/runs/${encodeURIComponent(runId)}/reextract`,
+    { method: "POST" }
+  );
+}
+
 export async function listDatasheetRunCandidates(
   runId: string,
   params: { relevance?: string; acquisition_status?: string; limit?: number; offset?: number } = {}
@@ -822,5 +839,40 @@ export async function downloadDatasheetRunManifest(runId: string) {
       res.headers.get("content-disposition"),
       "discovery-manifest.csv"
     ),
+  };
+}
+
+// ── Datasheet extraction (round 2) ────────────────────────────────────────────
+
+export async function listDatasheetRunRows(
+  runId: string,
+  params: { limit?: number; offset?: number } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  if (params.offset !== undefined) query.set("offset", String(params.offset));
+  return apiFetch<DatasheetRow[]>(
+    `/admin/datasheets/runs/${encodeURIComponent(runId)}/rows?${query.toString()}`
+  );
+}
+
+export async function estimateDatasheetExtraction(runId: string) {
+  return apiFetch<DatasheetExtractionEstimate>(
+    `/admin/datasheets/runs/${encodeURIComponent(runId)}/extraction-estimate`,
+    { method: "POST" }
+  );
+}
+
+export async function downloadDatasheetCsv(runId: string) {
+  const res = await fetch(
+    `${API_PREFIX}/admin/datasheets/runs/${encodeURIComponent(runId)}/datasheet.csv`
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.detail ?? `API error ${res.status}`);
+  }
+  return {
+    blob: await res.blob(),
+    filename: filenameFromDisposition(res.headers.get("content-disposition"), "datasheet.csv"),
   };
 }

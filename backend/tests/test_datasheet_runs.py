@@ -17,6 +17,7 @@ import pytest
 
 from app.api import deps
 from app.datasheet import discovery_service, worker
+from app.datasheet.extractor import ExtractionSummary
 from app.db.models import User
 from app.main import app
 from pipelines.discovery.canonicalize import Candidate
@@ -59,7 +60,7 @@ def make_run(**overrides):
         "name": "yarrowia-2016-2026",
         "status": "queued",
         "phase": None,
-        "stop_after_phase": "ingestion",
+        "stop_after_phase": "export",
         "seed_kind": "organism",
         "organism_name": "Yarrowia lipolytica",
         "organism_taxid": 4952,
@@ -74,6 +75,13 @@ def make_run(**overrides):
         "config_snapshot": {"discovery": {"max_records_per_source": 500}},
         "candidate_count": 3426,
         "acquired_count": None,
+        "extracted_count": None,
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "cached_tokens": None,
+        "extraction_batch_id": None,
+        "extraction_batch_submitted_at": None,
+        "extraction_batch_polled_at": None,
         "cache_path": "data/corpora/datasheets/test-run",
         "progress_message": "Queued",
         "log_tail": None,
@@ -109,6 +117,8 @@ def make_candidate_row(**overrides):
         "relevance_reason": "seed term in title (1 hit)",
         "acquisition_status": "pending",
         "acquisition_route": None,
+        "extraction_status": None,
+        "extraction_error": None,
         "dedupe_group": "doi:10.1021/acsomega.6c03958",
         "possible_duplicate_of": None,
         "duplicate_evidence": None,
@@ -148,9 +158,13 @@ def patch_run_routes(monkeypatch, *, run=None, candidates=None, counts=None):
     async def fake_list_candidates(_db, _run_id, **_kwargs):
         return candidates if candidates is not None else [make_candidate_row()]
 
+    async def fake_row_count(_db, _run_id):
+        return 0
+
     monkeypatch.setattr("app.api.routes.admin_datasheet.get_run", fake_get_run)
     monkeypatch.setattr("app.api.routes.admin_datasheet.count_candidates", fake_counts)
     monkeypatch.setattr("app.api.routes.admin_datasheet.list_candidates", fake_list_candidates)
+    monkeypatch.setattr("app.api.routes.admin_datasheet.count_rows", fake_row_count)
     return run
 
 
@@ -374,6 +388,91 @@ async def test_manifest_downloads_as_a_csv_attachment(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rows_endpoint_returns_cells_with_their_evidence(monkeypatch) -> None:
+    """A reviewer judges a cell from its quote; a bare value would be
+    indistinguishable from a guess."""
+    patch_run_routes(monkeypatch)
+
+    async def fake_rows(_db, _run_id, limit=200, offset=0):
+        return [
+            {
+                "id": uuid.uuid4(),
+                "candidate_id": uuid.uuid4(),
+                "title": "Engineering Yarrowia",
+                "cells": {
+                    "compounds": {
+                        "value": "citric acid",
+                        "confidence": 0.92,
+                        "evidence_quote": "Titre reached 50 g/L citric acid",
+                        "evidence_section": "results",
+                    }
+                },
+                "source_tier": "fulltext",
+                "extraction_model": "claude-sonnet-5",
+                "doi": "10.1/a",
+                "year": 2020,
+            }
+        ]
+
+    monkeypatch.setattr("app.api.routes.admin_datasheet.list_rows", fake_rows)
+
+    async with make_client(make_admin()) as client:
+        response = await client.get(f"/api/v1/admin/datasheets/runs/{RUN_ID}/rows")
+
+    assert response.status_code == 200
+    body = response.json()[0]
+    assert body["cells"]["compounds"]["evidence_quote"].startswith("Titre reached")
+    assert body["source_tier"] == "fulltext"
+
+
+@pytest.mark.asyncio
+async def test_datasheet_csv_downloads_as_an_attachment(monkeypatch) -> None:
+    patch_run_routes(monkeypatch)
+
+    async def fake_csv(_db, _run):
+        return "Compounds,doi\ncitric acid,10.1/a\n"
+
+    monkeypatch.setattr("app.api.routes.admin_datasheet.datasheet_csv_for_run", fake_csv)
+
+    async with make_client(make_admin()) as client:
+        response = await client.get(f"/api/v1/admin/datasheets/runs/{RUN_ID}/datasheet.csv")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment" in response.headers["content-disposition"]
+    assert response.text.startswith("Compounds,doi")
+
+
+@pytest.mark.asyncio
+async def test_extraction_estimate_reports_cost_without_sending_anything(monkeypatch) -> None:
+    """The projection is the only thing that happens while extraction is off, so
+    the endpoint says so rather than looking like an empty result."""
+    from app.datasheet.extractor import ExtractionPlan
+
+    patch_run_routes(monkeypatch)
+    plan = ExtractionPlan(model="claude-sonnet-5")
+
+    async def fake_plan(_db, _run, cache_root=None, provider=None):
+        return plan
+
+    monkeypatch.setattr("app.api.routes.admin_datasheet.plan_extraction", fake_plan)
+    monkeypatch.setattr(
+        "app.api.routes.admin_datasheet.resolve_run_cache_root", lambda _run: Path("/tmp/x")
+    )
+
+    async with make_client(make_admin()) as client:
+        response = await client.post(
+            f"/api/v1/admin/datasheets/runs/{RUN_ID}/extraction-estimate"
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["extraction_enabled"] is False
+    assert body["papers"] == 0
+    assert body["model"] == "claude-sonnet-5"
+
+
+@pytest.mark.asyncio
 async def test_cancelling_a_finished_run_is_not_an_error(monkeypatch) -> None:
     finished = make_run(status="succeeded", finished_at=NOW)
 
@@ -388,6 +487,195 @@ async def test_cancelling_a_finished_run_is_not_an_error(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "succeeded"
+
+
+# ── Cancellation and re-extraction ────────────────────────────────────────────
+
+
+class RunSession:
+    """Minimal async session for the run-lifecycle helpers."""
+
+    def __init__(self, run):
+        self.run = run
+        self.statements: list = []
+        self.commits = 0
+
+    async def get(self, _model, _run_id):
+        return self.run
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return SimpleNamespace()
+
+    async def commit(self):
+        self.commits += 1
+
+    async def refresh(self, _run):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_parked_run_asks_the_provider_to_stop_the_batch(monkeypatch) -> None:
+    """A parked run is not `running`, so no worker will look at it again. If this
+    call does not stop the batch, nothing does: it runs to completion, is billed in
+    full, and its results are never collected."""
+    run = make_run(status="awaiting_batch", extraction_batch_id="msgbatch_01")
+    cancelled: list[str] = []
+
+    async def fake_cancel(_provider, target):
+        cancelled.append(target.extraction_batch_id)
+        return True
+
+    monkeypatch.setattr(discovery_service, "cancel_extraction_batch", fake_cancel)
+    monkeypatch.setattr(discovery_service, "extraction_provider", lambda: object())
+
+    result = await discovery_service.request_cancel(RunSession(run), RUN_ID)
+
+    assert cancelled == ["msgbatch_01"]
+    assert result.status == "cancelled"
+    # Cancelling is not free, and the log says so rather than implying a refund.
+    assert "still billed" in run.log_tail
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_provider_still_cancels_the_run(monkeypatch) -> None:
+    """And leaves the batch id on the row: an uncollectable charge that is named is
+    traceable, one that is erased is not."""
+    run = make_run(status="awaiting_batch", extraction_batch_id="msgbatch_01")
+
+    async def fake_cancel(_provider, _target):
+        return False
+
+    monkeypatch.setattr(discovery_service, "cancel_extraction_batch", fake_cancel)
+    monkeypatch.setattr(discovery_service, "extraction_provider", lambda: object())
+
+    result = await discovery_service.request_cancel(RunSession(run), RUN_ID)
+
+    assert result.status == "cancelled"
+    assert run.extraction_batch_id == "msgbatch_01"
+    assert "could not be cancelled" in run.log_tail
+
+
+@pytest.mark.asyncio
+async def test_re_extraction_clears_the_rows_and_requeues_at_phase_d() -> None:
+    run = make_run(
+        status="succeeded",
+        phase="export",
+        extracted_count=5,
+        prompt_tokens=41_000,
+        extraction_batch_id="msgbatch_old",
+        stop_after_phase="export",
+    )
+    session = RunSession(run)
+
+    result = await discovery_service.request_reextraction(session, RUN_ID)
+
+    assert result.status == "queued"
+    # The worker's "start at D" signal — a normal queued run has phase = NULL.
+    assert result.phase == "extraction"
+    assert run.extraction_batch_id is None
+    assert (run.extracted_count, run.prompt_tokens, run.finished_at) == (None, None, None)
+    kinds = [(statement.is_delete, statement.is_update) for statement in session.statements]
+    # The old rows go, and every candidate's recorded outcome is reset — otherwise a
+    # shorter re-extraction leaves the previous pass's rows in the datasheet.
+    assert (True, False) in kinds
+    assert (False, True) in kinds
+
+
+@pytest.mark.asyncio
+async def test_re_extracting_a_running_run_is_refused() -> None:
+    """Clearing rows underneath a worker that is writing them is a race, not a retry."""
+    for status_name in ("queued", "running", "awaiting_batch", "cancel_requested"):
+        run = make_run(status=status_name)
+        with pytest.raises(discovery_service.DatasheetRunError, match=status_name):
+            await discovery_service.request_reextraction(RunSession(run), RUN_ID)
+
+
+@pytest.mark.asyncio
+async def test_re_extract_over_http_reports_a_conflict_rather_than_a_500(monkeypatch) -> None:
+    async def refuses(_db, _run_id):
+        raise discovery_service.DatasheetRunError("Run is running; cancel it before re-extracting")
+
+    monkeypatch.setattr("app.api.routes.admin_datasheet.request_reextraction", refuses)
+
+    async with make_client(make_admin()) as client:
+        response = await client.post(f"/api/v1/admin/datasheets/runs/{RUN_ID}/reextract")
+
+    assert response.status_code == 409
+    assert "cancel it" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_re_extract_over_http_returns_the_requeued_run(monkeypatch) -> None:
+    requeued = make_run(status="queued", phase="extraction")
+
+    async def fake_reextract(_db, _run_id):
+        return requeued
+
+    monkeypatch.setattr("app.api.routes.admin_datasheet.request_reextraction", fake_reextract)
+    patch_run_routes(monkeypatch, run=requeued)
+
+    async with make_client(make_admin()) as client:
+        response = await client.post(f"/api/v1/admin/datasheets/runs/{RUN_ID}/reextract")
+
+    assert response.status_code == 200
+    assert response.json()["phase"] == "extraction"
+
+
+# ── stop_after_phase ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_discovery_only_run_can_be_queued(monkeypatch) -> None:
+    """Now that runs default to going the whole way, this is the only way to review a
+    manifest before anything is fetched or any tokens are projected."""
+    created = make_run(stop_after_phase="discovery")
+    captured: dict = {}
+
+    async def fake_create(_db, **kwargs):
+        captured.update(kwargs)
+        return created
+
+    monkeypatch.setattr("app.api.routes.admin_datasheet.create_run", fake_create)
+    patch_run_routes(monkeypatch, run=created)
+
+    async with make_client(make_admin()) as client:
+        response = await client.post(
+            "/api/v1/admin/datasheets/runs",
+            json={**RUN_PAYLOAD, "stop_after_phase": "discovery"},
+        )
+
+    assert response.status_code == 201
+    assert captured["stop_after_phase"] == "discovery"
+    assert response.json()["stop_after_phase"] == "discovery"
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_stop_phase_is_rejected_at_the_edge() -> None:
+    async with make_client(make_admin()) as client:
+        response = await client.post(
+            "/api/v1/admin/datasheets/runs",
+            json={**RUN_PAYLOAD, "stop_after_phase": "extraction"},
+        )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_runs_default_to_going_the_whole_way(monkeypatch) -> None:
+    captured: dict = {}
+
+    async def fake_create(_db, **kwargs):
+        captured.update(kwargs)
+        return make_run()
+
+    monkeypatch.setattr("app.api.routes.admin_datasheet.create_run", fake_create)
+    patch_run_routes(monkeypatch)
+
+    async with make_client(make_admin()) as client:
+        await client.post("/api/v1/admin/datasheets/runs", json=RUN_PAYLOAD)
+
+    assert captured["stop_after_phase"] == "export"
 
 
 # ── Phase-A persistence mapping ───────────────────────────────────────────────
@@ -516,11 +804,25 @@ async def test_a_failed_run_is_marked_failed_and_the_worker_survives(monkeypatch
     assert run.finished_at is not None
 
 
-def patch_phases(monkeypatch, run, *, acquisition=None, cancelled=False):
+def patch_phases(monkeypatch, run, *, acquisition=None, cancelled=False, extraction=None):
     session = FakeSession(run)
 
     async def fake_discovery(*_args, **_kwargs):
         return {"candidates": 10}
+
+    async def fake_extraction(*_args, **_kwargs):
+        # Default: the dry run the worker performs when extraction is disabled.
+        return extraction or ExtractionSummary(
+            model="claude-sonnet-5",
+            dry_run=True,
+            plan={
+                "papers": 6,
+                "input_tokens": 50_100,
+                "token_method": "estimated_from_chars",
+                "model": "claude-sonnet-5",
+                "projected_cost_usd": 0.1,
+            },
+        )
 
     async def fake_acquisition(*_args, **_kwargs):
         return acquisition or {
@@ -541,6 +843,12 @@ def patch_phases(monkeypatch, run, *, acquisition=None, cancelled=False):
     monkeypatch.setattr(worker, "AsyncSessionLocal", lambda: session)
     monkeypatch.setattr(worker, "run_discovery_phase", fake_discovery)
     monkeypatch.setattr(worker, "run_acquisition_phase", fake_acquisition)
+    async def fake_export(*_args, **_kwargs):
+        return {"rows": 5, "csv_path": "data/corpora/datasheets/test-run/datasheet.csv"}
+
+    monkeypatch.setattr(worker, "run_extraction_phase", fake_extraction)
+    monkeypatch.setattr(worker, "run_export_phase", fake_export)
+    monkeypatch.setattr(worker, "extraction_provider", lambda: None)
     monkeypatch.setattr(worker, "resolve_run_cache_root", lambda _run: Path("/tmp/does-not-matter"))
     monkeypatch.setattr(worker, "is_cancel_requested", cancel_state)
     return session
@@ -548,18 +856,81 @@ def patch_phases(monkeypatch, run, *, acquisition=None, cancelled=False):
 
 @pytest.mark.asyncio
 async def test_a_run_drives_discovery_then_acquisition(monkeypatch) -> None:
-    """Round 1 ends after acquisition. Reported as succeeded rather than left
-    'running', so the run list is honest about a round without extraction."""
     run = make_run(status="running")
     patch_phases(monkeypatch, run)
 
     await worker.run_datasheet_job(RUN_ID)
 
     assert run.status == "succeeded"
-    assert run.phase == "acquisition"
     assert run.acquired_count == 6
     assert "6 fetched (2 from cache), 3 need assisted acquisition" in run.log_tail
-    assert "extraction is round 2" in run.log_tail
+
+
+@pytest.mark.asyncio
+async def test_extraction_defaults_to_a_dry_run_and_says_so(monkeypatch) -> None:
+    """With extraction disabled the run still reaches phase D — it reports what a
+    real pass would cost and stops. Succeeded, not failed: nothing went wrong."""
+    run = make_run(status="running")
+    patch_phases(monkeypatch, run)
+
+    await worker.run_datasheet_job(RUN_ID)
+
+    assert run.status == "succeeded"
+    assert run.phase == "extraction"
+    assert run.extracted_count == 0
+    assert "6 papers ready to extract" in run.progress_message
+    assert "DATASHEET_EXTRACTION_ENABLED" in run.log_tail
+    assert run.config_snapshot["extraction_result"]["dry_run"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_live_extraction_records_rows_and_token_counters(monkeypatch) -> None:
+    """Token counters come from actual usage, not the projection — cost is observed."""
+    run = make_run(status="running")
+    patch_phases(
+        monkeypatch,
+        run,
+        extraction=ExtractionSummary(
+            model="claude-sonnet-5",
+            escalation_model="claude-opus-5",
+            dry_run=False,
+            extracted=5,
+            escalated=1,
+            refused=0,
+            failed=1,
+            prompt_tokens=41_000,
+            completion_tokens=7_400,
+            cached_tokens=12_000,
+        ),
+    )
+
+    await worker.run_datasheet_job(RUN_ID)
+
+    assert run.status == "succeeded"
+    assert run.phase == "export"
+    assert run.extracted_count == 5
+    assert (run.prompt_tokens, run.completion_tokens, run.cached_tokens) == (41_000, 7_400, 12_000)
+    assert "5 rows, 1 escalated" in run.log_tail
+    # The run is not complete until the datasheet exists on disk.
+    assert "datasheet.csv" in run.progress_message
+    assert run.config_snapshot["export_result"]["rows"] == 5
+
+
+@pytest.mark.asyncio
+async def test_a_failed_extraction_fails_the_run_without_killing_the_worker(monkeypatch) -> None:
+    run = make_run(status="running")
+
+    async def exploding_extraction(*_args, **_kwargs):
+        raise RuntimeError("batch submission rejected")
+
+    patch_phases(monkeypatch, run)
+    monkeypatch.setattr(worker, "run_extraction_phase", exploding_extraction)
+
+    await worker.run_datasheet_job(RUN_ID)
+
+    assert run.status == "failed"
+    assert "batch submission rejected" in run.error
+    assert run.finished_at is not None
 
 
 @pytest.mark.asyncio
@@ -612,9 +983,227 @@ async def test_a_cancellation_requested_during_discovery_is_honoured(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_a_submitted_batch_parks_the_run_rather_than_finishing_it(monkeypatch) -> None:
+    """The worker also serves the ingestion queue. A run whose batch is with the
+    provider must give the process back instead of sitting in a poll loop for
+    however many hours the batch takes."""
+    run = make_run(status="running")
+    session = patch_phases(
+        monkeypatch,
+        run,
+        extraction=ExtractionSummary(
+            model="claude-sonnet-5",
+            dry_run=False,
+            awaiting_batch=True,
+            batch_id="msgbatch_01",
+            plan={"papers": 6, "to_extract": 6},
+        ),
+    )
+    exported = {"called": False}
+
+    async def should_not_export(*_args, **_kwargs):
+        exported["called"] = True
+        return {"rows": 0, "csv_path": None}
+
+    monkeypatch.setattr(worker, "run_export_phase", should_not_export)
+
+    assert await worker.run_datasheet_job(RUN_ID) is True
+
+    assert run.status == "awaiting_batch"
+    assert "msgbatch_01" in run.progress_message
+    assert exported["called"] is False
+    assert run.finished_at is None
+    assert session.commits > 0
+
+
+@pytest.mark.asyncio
+async def test_a_parked_run_resumes_at_collection_and_skips_a_and_b(monkeypatch) -> None:
+    """Re-running discovery on resume would re-query every source and re-fetch every
+    paper — and produce a candidate set the paid batch no longer matches."""
+    run = make_run(status="awaiting_batch", phase="extraction", extraction_batch_id="msgbatch_01")
+    patch_phases(monkeypatch, run)
+    phases_run: list[str] = []
+
+    async def discovery_must_not_run(*_args, **_kwargs):
+        phases_run.append("discovery")
+        return {}
+
+    async def acquisition_must_not_run(*_args, **_kwargs):
+        phases_run.append("acquisition")
+        return {}
+
+    async def fake_collect(*_args, **_kwargs):
+        return ExtractionSummary(
+            model="claude-sonnet-5", dry_run=False, extracted=4, reused=1, prompt_tokens=30_000
+        )
+
+    monkeypatch.setattr(worker, "run_discovery_phase", discovery_must_not_run)
+    monkeypatch.setattr(worker, "run_acquisition_phase", acquisition_must_not_run)
+    monkeypatch.setattr(worker, "collect_extraction_batch", fake_collect)
+    monkeypatch.setattr(worker, "extraction_provider", lambda: object())
+
+    assert await worker.run_datasheet_job(RUN_ID) is True
+
+    assert phases_run == []
+    assert run.status == "succeeded"
+    assert run.extracted_count == 4
+    assert "1 reused from cache" in run.log_tail
+
+
+@pytest.mark.asyncio
+async def test_a_batch_still_processing_reports_no_work_so_the_loop_sleeps(monkeypatch) -> None:
+    """Returning "work done" here would spin: the loop would re-claim the same run
+    immediately and poll the batch endpoint as fast as it can."""
+    run = make_run(status="awaiting_batch", extraction_batch_id="msgbatch_01")
+    patch_phases(monkeypatch, run)
+
+    async def still_processing(*_args, **_kwargs):
+        return ExtractionSummary(model="claude-sonnet-5", awaiting_batch=True, batch_id="msgbatch_01")
+
+    monkeypatch.setattr(worker, "collect_extraction_batch", still_processing)
+    monkeypatch.setattr(worker, "extraction_provider", lambda: object())
+
+    assert await worker.run_datasheet_job(RUN_ID) is False
+    assert run.status == "awaiting_batch"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_parked_run_cancels_the_batch_before_giving_up_on_it(
+    monkeypatch,
+) -> None:
+    run = make_run(status="cancel_requested", extraction_batch_id="msgbatch_01")
+    patch_phases(monkeypatch, run, cancelled=True)
+    cancelled: list[str] = []
+
+    async def fake_cancel(_provider, target_run):
+        cancelled.append(target_run.extraction_batch_id)
+        return True
+
+    monkeypatch.setattr(worker, "cancel_extraction_batch", fake_cancel)
+    monkeypatch.setattr(worker, "extraction_provider", lambda: object())
+
+    await worker.run_datasheet_job(RUN_ID)
+
+    assert cancelled == ["msgbatch_01"]
+    assert run.status == "cancelled"
+    # Says plainly that cancelling is not free.
+    assert "still billed" in run.log_tail
+
+
+@pytest.mark.asyncio
+async def test_a_parked_run_with_no_provider_fails_with_the_batch_id(monkeypatch) -> None:
+    """Parking forever would hide a batch that is being billed and that nobody will
+    ever read. The error names it so it can be cancelled by hand."""
+    run = make_run(status="awaiting_batch", extraction_batch_id="msgbatch_01")
+    patch_phases(monkeypatch, run)
+    monkeypatch.setattr(worker, "extraction_provider", lambda: None)
+
+    await worker.run_datasheet_job(RUN_ID)
+
+    assert run.status == "failed"
+    assert "msgbatch_01" in run.error
+
+
+@pytest.mark.asyncio
+async def test_a_requeued_run_at_phase_extraction_starts_at_d(monkeypatch) -> None:
+    """What `reextract` queues. Discovery and acquisition are unchanged, so repeating
+    them would cost thousands of upstream records for nothing."""
+    run = make_run(status="running", phase="extraction")
+    patch_phases(monkeypatch, run)
+    phases_run: list[str] = []
+
+    async def discovery_must_not_run(*_args, **_kwargs):
+        phases_run.append("discovery")
+        return {}
+
+    monkeypatch.setattr(worker, "run_discovery_phase", discovery_must_not_run)
+
+    await worker.run_datasheet_job(RUN_ID)
+
+    assert phases_run == []
+    assert "Re-extracting" in run.log_tail
+    assert run.status == "succeeded"
+
+
+class ClaimSession:
+    """Captures the claim query and hands back one run."""
+
+    def __init__(self, run):
+        self.run = run
+        self.statements: list = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def begin(self):
+        class _Tx:
+            async def __aenter__(self_inner):
+                return None
+
+            async def __aexit__(self_inner, *_args):
+                return None
+
+        return _Tx()
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: self.run))
+
+
+@pytest.mark.asyncio
+async def test_the_claim_query_also_takes_parked_runs_that_are_due_a_poll(monkeypatch) -> None:
+    run = make_run(status="awaiting_batch", extraction_batch_id="msgbatch_01")
+    session = ClaimSession(run)
+    monkeypatch.setattr(worker, "AsyncSessionLocal", lambda: session)
+
+    claimed = await worker.claim_next_run()
+
+    assert claimed == RUN_ID
+    sql = str(session.statements[0])
+    # Both halves matter: without the status the parked run is never picked up, and
+    # without the polled_at predicate it is picked up on every single loop.
+    assert "extraction_batch_polled_at" in sql
+    assert "awaiting_batch" in session.statements[0].compile().params.values()
+    # Left parked, and stamped: a crash mid-collection must leave it re-claimable,
+    # and the stamp is what throttles the next claim.
+    assert run.status == "awaiting_batch"
+    assert run.extraction_batch_polled_at is not None
+
+
+@pytest.mark.asyncio
+async def test_claiming_a_queued_run_marks_it_running(monkeypatch) -> None:
+    run = make_run(status="queued")
+    monkeypatch.setattr(worker, "AsyncSessionLocal", lambda: ClaimSession(run))
+
+    await worker.claim_next_run()
+
+    assert run.status == "running"
+    assert run.started_at is not None
+
+
+@pytest.mark.asyncio
 async def test_polling_reports_when_there_was_nothing_to_claim(monkeypatch) -> None:
     async def nothing_queued():
         return None
 
     monkeypatch.setattr(worker, "claim_next_run", nothing_queued)
     assert await worker.poll_once() is False
+
+
+@pytest.mark.asyncio
+async def test_a_round_one_run_still_stops_where_it_was_queued_to(monkeypatch) -> None:
+    """Rows created before extraction existed carry stop_after_phase='ingestion'.
+    Sweeping them into a phase they were never queued for would change what an
+    already-completed run means."""
+    run = make_run(status="running", stop_after_phase="ingestion")
+    patch_phases(monkeypatch, run)
+
+    await worker.run_datasheet_job(RUN_ID)
+
+    assert run.status == "succeeded"
+    assert run.phase == "acquisition"
+    assert "stopped after acquisition" in run.log_tail
+    assert run.extracted_count is None

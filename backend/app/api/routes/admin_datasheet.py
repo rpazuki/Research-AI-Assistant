@@ -5,6 +5,10 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.api.deps import AdminUser, DBSession
+from app.core.config import settings
+from app.datasheet.export_service import count_rows, datasheet_csv_for_run, list_rows
+from app.datasheet.extractor import plan_extraction
+from app.providers.registry import get_llm_provider
 from app.datasheet.admin_service import (
     DatasheetTemplateError,
     create_template,
@@ -26,6 +30,8 @@ from app.datasheet.discovery_service import (
     list_runs,
     manifest_csv_for_run,
     request_cancel,
+    request_reextraction,
+    resolve_run_cache_root,
 )
 from app.datasheet.lookup_service import (
     PRODUCT_CLASSES,
@@ -37,7 +43,9 @@ from app.datasheet.lookup_service import (
 from app.db.models import DatasheetCandidate, DatasheetRun, DatasheetTemplate
 from app.schemas.datasheet import (
     DatasheetCandidateResponse,
+    DatasheetExtractionEstimate,
     DatasheetExtractionSchemaResponse,
+    DatasheetRowResponse,
     DatasheetRunCreate,
     DatasheetRunDetail,
     DatasheetRunSummary,
@@ -301,6 +309,7 @@ async def create_datasheet_run(
             year_from=body.year_from,
             year_to=body.year_to,
             template_name=body.template_name,
+            stop_after_phase=body.stop_after_phase,
             config={
                 "discovery": {
                     "sources": body.sources or None,
@@ -345,6 +354,28 @@ async def cancel_datasheet_run(
     return await _build_run_detail(db, run)
 
 
+@router.post("/runs/{run_id}/reextract", response_model=DatasheetRunDetail)
+async def reextract_datasheet_run(
+    run_id: uuid.UUID, _admin: AdminUser, db: DBSession
+) -> DatasheetRunDetail:
+    """Re-queue a finished run at extraction, keeping its discovery and acquisition.
+
+    A corrected extraction hint or a fixed template should not cost another pass over
+    thousands of upstream records and every full text — none of which changed. The
+    result cache means the papers whose prompt is unchanged are reused rather than
+    re-sent, so a template tweak re-extracts only what it actually affected.
+    """
+    try:
+        run = await request_reextraction(db, run_id)
+    except DatasheetRunError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    return await _build_run_detail(db, run)
+
+
 @router.get("/runs/{run_id}/candidates", response_model=list[DatasheetCandidateResponse])
 async def list_datasheet_run_candidates(
     run_id: uuid.UUID,
@@ -381,6 +412,63 @@ async def download_datasheet_run_manifest(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
+
+
+@router.get("/runs/{run_id}/rows", response_model=list[DatasheetRowResponse])
+async def list_datasheet_run_rows(
+    run_id: uuid.UUID,
+    _admin: AdminUser,
+    db: DBSession,
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> list[DatasheetRowResponse]:
+    """Extracted rows for a run, each cell carrying its value and its evidence."""
+    await _get_run_or_404(db, run_id)
+    rows = await list_rows(db, run_id, limit=limit, offset=offset)
+    return [DatasheetRowResponse(**row) for row in rows]
+
+
+@router.get("/runs/{run_id}/datasheet.csv")
+async def download_datasheet_csv(
+    run_id: uuid.UUID, _admin: AdminUser, db: DBSession
+) -> Response:
+    """The datasheet itself: the curated columns in spreadsheet order, then provenance.
+
+    Rendered from the persisted rows against the run's frozen template snapshot, so
+    the file a curator downloads next month matches the one produced on the day.
+    """
+    run = await _get_run_or_404(db, run_id)
+    csv_text = await datasheet_csv_for_run(db, run)
+    filename = f"datasheet-{run.name}-{run_id}.csv".replace(" ", "_")
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/runs/{run_id}/extraction-estimate", response_model=DatasheetExtractionEstimate)
+async def estimate_datasheet_extraction(
+    run_id: uuid.UUID, _admin: AdminUser, db: DBSession
+) -> DatasheetExtractionEstimate:
+    """What a real extraction pass would cost for this run. Sends nothing.
+
+    Counts tokens with the provider's own tokeniser, so the projected figure is
+    arithmetic rather than an estimate — and reports whether extraction is enabled
+    at all, because a projection is the only thing that happens while it is not.
+    """
+    run = await _get_run_or_404(db, run_id)
+    try:
+        provider = get_llm_provider()
+    except Exception:  # noqa: BLE001 - a missing key must not break the projection
+        provider = None
+    plan = await plan_extraction(
+        db, run, cache_root=resolve_run_cache_root(run), provider=provider
+    )
+    return DatasheetExtractionEstimate(
+        extraction_enabled=settings.datasheet_extraction_enabled,
+        **plan.as_dict(),
+    )
 
 
 @router.get("/runs/{run_id}/acquisition-links.csv")
@@ -469,6 +557,7 @@ def _build_run_summary(run: DatasheetRun) -> DatasheetRunSummary:
         name=run.name,
         status=run.status,
         phase=run.phase,
+        stop_after_phase=run.stop_after_phase,
         seed_kind=run.seed_kind,
         organism_name=run.organism_name,
         organism_taxid=run.organism_taxid,
@@ -502,7 +591,15 @@ async def _build_run_detail(db: DBSession, run: DatasheetRun) -> DatasheetRunDet
         candidate_counts=await count_candidates(db, run.id),
         discovery_summary=config.get("discovery_result"),
         acquisition_summary=config.get("acquisition_result"),
+        extraction_summary=config.get("extraction_result"),
         acquired_count=run.acquired_count,
+        extracted_count=run.extracted_count,
+        row_count=await count_rows(db, run.id),
+        prompt_tokens=run.prompt_tokens,
+        completion_tokens=run.completion_tokens,
+        cached_tokens=run.cached_tokens,
+        extraction_batch_id=run.extraction_batch_id,
+        extraction_batch_submitted_at=run.extraction_batch_submitted_at,
     )
 
 
@@ -529,6 +626,8 @@ def _build_candidate(row: DatasheetCandidate) -> DatasheetCandidateResponse:
         relevance_reason=row.relevance_reason,
         acquisition_status=row.acquisition_status,
         acquisition_route=row.acquisition_route,
+        extraction_status=row.extraction_status,
+        extraction_error=row.extraction_error,
         dedupe_group=row.dedupe_group,
         possible_duplicate_of=list(row.possible_duplicate_of or []),
         duplicate_evidence=row.duplicate_evidence,

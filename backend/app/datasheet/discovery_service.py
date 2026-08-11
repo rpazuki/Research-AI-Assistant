@@ -9,7 +9,8 @@ half: creating a run from a resolved seed, driving discovery, writing
 rather than from memory — so what a curator downloads is what the run actually
 recorded.
 
-Round 1 stops after ingestion (`stop_after_phase='ingestion'`), so a run that never
+Runs created before round 2 carry `stop_after_phase='ingestion'` and still stop
+after acquisition; new runs go through to export. A run that never
 extracts finishes as `succeeded` instead of looking like a failure.
 """
 
@@ -23,12 +24,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.datasheet.admin_service import build_template_snapshot, get_template
-from app.db.models import DatasheetCandidate, DatasheetRun
+from app.datasheet.extractor import cancel_extraction_batch, extraction_provider
+from app.db.models import DatasheetCandidate, DatasheetRow, DatasheetRun
 
 _BACKEND_DIR = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _BACKEND_DIR if (_BACKEND_DIR / "pipelines").exists() else _BACKEND_DIR.parent
@@ -51,6 +53,15 @@ logger = logging.getLogger(__name__)
 
 LOG_TAIL_LINES = 60
 CANDIDATE_PAGE_SIZE = 200
+
+# Where a run may be asked to stop. 'ingestion' is not offered: it exists only on
+# round-1 rows created before extraction, and offering it now would queue runs into
+# a phase that no longer has a distinct meaning.
+STOPPABLE_PHASES = {"discovery", "acquisition", "export"}
+
+# A run in one of these has not finished, so its rows and batch state are still
+# being written. Re-extracting one would race the worker.
+ACTIVE_STATUSES = {"queued", "running", "awaiting_batch", "cancel_requested"}
 
 
 class DatasheetRunError(Exception):
@@ -87,6 +98,7 @@ async def create_run(
     template_name: str,
     config: dict[str, Any],
     requested_by_user_id: uuid.UUID | None,
+    stop_after_phase: str = "export",
 ) -> DatasheetRun:
     """Create a queued run with the template frozen onto it.
 
@@ -97,6 +109,10 @@ async def create_run(
         raise DatasheetRunError(f"Unknown seed kind '{seed_kind}'")
     if not organism_synonyms and not product_synonyms:
         raise DatasheetRunError("A run needs at least one organism or product search term")
+    if stop_after_phase not in STOPPABLE_PHASES:
+        raise DatasheetRunError(
+            f"Cannot stop after '{stop_after_phase}'; choose one of {sorted(STOPPABLE_PHASES)}"
+        )
 
     template = await get_template(db, template_name)
     if template is None:
@@ -106,8 +122,13 @@ async def create_run(
         name=name,
         requested_by_user_id=requested_by_user_id,
         status="queued",
-        # Round 1 has no extraction pass; see the module docstring.
-        stop_after_phase="ingestion",
+        # Defaults to the whole way now that extraction exists. Whether the
+        # extraction pass actually calls the model is a separate, explicit
+        # decision (`DATASHEET_EXTRACTION_ENABLED`) — reaching phase D only means
+        # the run reports what a real pass would cost. A caller can still ask for a
+        # discovery-only or acquisition-only run, which is how a curator reviews the
+        # manifest before spending anything on fetching.
+        stop_after_phase=stop_after_phase,
         seed_kind=seed_kind,
         organism_name=organism_name,
         organism_taxid=organism_taxid,
@@ -141,18 +162,87 @@ async def get_run(db: AsyncSession, run_id: uuid.UUID) -> DatasheetRun | None:
 
 
 async def request_cancel(db: AsyncSession, run_id: uuid.UUID) -> DatasheetRun | None:
-    """Ask a run to stop. Terminal runs are left alone."""
+    """Ask a run to stop. Terminal runs are left alone.
+
+    A run parked on an extraction batch is not `running`, so no worker will look at
+    it again — which means cancelling it here has to cancel the batch too, or the
+    batch runs to completion, is billed in full, and its results are never
+    collected. Best-effort: failing to reach the provider still cancels the run, and
+    the batch id stays on the row so the cost remains traceable.
+    """
     run = await db.get(DatasheetRun, run_id)
     if run is None:
         return None
     if run.status in {"succeeded", "failed", "cancelled"}:
         return run
 
+    batch_note = None
+    if run.extraction_batch_id:
+        cancelled_batch = await cancel_extraction_batch(extraction_provider(), run)
+        batch_note = (
+            f"Extraction batch {run.extraction_batch_id} cancel requested — requests already "
+            "in flight still complete and are still billed"
+            if cancelled_batch
+            else f"Extraction batch {run.extraction_batch_id} could not be cancelled; it will "
+            "run to completion and be billed"
+        )
+
     run.status = "cancel_requested" if run.status == "running" else "cancelled"
     run.progress_message = "Cancellation requested"
     run.log_tail = append_log(run.log_tail, "Cancellation requested")
+    if batch_note:
+        run.log_tail = append_log(run.log_tail, batch_note)
     if run.status == "cancelled":
         run.finished_at = utcnow()
+    await db.commit()
+    await db.refresh(run)
+    return run
+
+
+async def request_reextraction(db: AsyncSession, run_id: uuid.UUID) -> DatasheetRun | None:
+    """Re-queue a finished run at phase D, keeping its discovery and acquisition.
+
+    The case this exists for is a fixed extraction hint or a corrected template:
+    without it, improving one column means re-running discovery over thousands of
+    upstream records and re-fetching every full text, none of which changed.
+
+    `phase='extraction'` on a queued run is the worker's "start at D" signal — a
+    normal queued run has `phase = NULL`, so the two stay distinct without another
+    column. Rows are cleared rather than left: a re-extraction that produced fewer
+    rows would otherwise leave the previous run's rows mixed into the datasheet.
+    """
+    run = await db.get(DatasheetRun, run_id)
+    if run is None:
+        return None
+    if run.status in ACTIVE_STATUSES:
+        raise DatasheetRunError(
+            f"Run is {run.status}; cancel it before re-extracting so the worker is not raced"
+        )
+
+    await db.execute(delete(DatasheetRow).where(DatasheetRow.run_id == run_id))
+    await db.execute(
+        update(DatasheetCandidate)
+        .where(DatasheetCandidate.run_id == run_id)
+        .values(extraction_status=None, extraction_error=None)
+    )
+
+    run.status = "queued"
+    run.phase = "extraction"
+    run.stop_after_phase = "export"
+    # Cleared so the worker does not mistake a finished run's batch for a live one.
+    run.extraction_batch_id = None
+    run.extraction_batch_submitted_at = None
+    run.extraction_batch_polled_at = None
+    run.extracted_count = None
+    run.prompt_tokens = None
+    run.completion_tokens = None
+    run.cached_tokens = None
+    run.error = None
+    run.finished_at = None
+    run.progress_message = "Queued for re-extraction"
+    run.log_tail = append_log(
+        run.log_tail, "Re-extraction requested: rows cleared, will restart at phase D"
+    )
     await db.commit()
     await db.refresh(run)
     return run

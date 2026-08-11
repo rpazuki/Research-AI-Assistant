@@ -6,11 +6,20 @@ import { useRouter } from "next/navigation";
 import {
   cancelDatasheetRun,
   downloadDatasheetAssistedLinks,
+  downloadDatasheetCsv,
   downloadDatasheetRunManifest,
+  estimateDatasheetExtraction,
   getDatasheetRun,
   listDatasheetRunCandidates,
+  listDatasheetRunRows,
+  reextractDatasheetRun,
 } from "@/lib/api";
-import type { DatasheetCandidate, DatasheetRunDetail } from "@/types";
+import type {
+  DatasheetCandidate,
+  DatasheetExtractionEstimate,
+  DatasheetRow,
+  DatasheetRunDetail,
+} from "@/types";
 import AdminHeader from "./AdminHeader";
 
 /**
@@ -25,13 +34,27 @@ import AdminHeader from "./AdminHeader";
  */
 
 const POLL_INTERVAL_MS = 5000;
-const ACTIVE_STATUSES = new Set(["queued", "running", "cancel_requested"]);
+// `awaiting_batch` counts as active: the run is parked on an extraction batch, not
+// finished. Leaving it out would stop polling on a run that is still going to
+// change, and hide the Cancel button on the one state where cancelling saves money.
+const ACTIVE_STATUSES = new Set(["queued", "running", "awaiting_batch", "cancel_requested"]);
 
 const RELEVANCE_STYLES: Record<string, string> = {
   studies: "bg-green-50 text-green-700",
   mentions: "bg-yellow-50 text-yellow-800",
   off_topic: "bg-gray-100 text-gray-600",
   unknown: "bg-blue-50 text-blue-700",
+};
+
+// Per-paper extraction outcome. A paper that refused or failed has no datasheet
+// row, so this column is the only place it appears at all.
+const EXTRACTION_STYLES: Record<string, string> = {
+  extracted: "bg-green-50 text-green-700",
+  cached: "bg-green-50 text-green-700",
+  refused: "bg-red-50 text-red-700",
+  failed: "bg-red-50 text-red-700",
+  no_text: "bg-gray-100 text-gray-600",
+  over_cap: "bg-yellow-50 text-yellow-800",
 };
 
 const RELEVANCE_FILTERS = ["", "studies", "mentions", "unknown", "off_topic"];
@@ -52,6 +75,10 @@ export default function AdminDatasheetRunClient({ runId }: { runId: string }) {
   const [candidates, setCandidates] = useState<DatasheetCandidate[]>([]);
   const [relevanceFilter, setRelevanceFilter] = useState("");
   const [onlyIncluded, setOnlyIncluded] = useState(false);
+  const [rows, setRows] = useState<DatasheetRow[]>([]);
+  const [estimate, setEstimate] = useState<DatasheetExtractionEstimate | null>(null);
+  const [estimating, setEstimating] = useState(false);
+  const [reextracting, setReextracting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,10 +114,36 @@ export default function AdminDatasheetRunClient({ runId }: { runId: string }) {
       setRun(detail);
       setCandidates(rows);
       setError(null);
+      if (detail.row_count > 0) {
+        setRows(await listDatasheetRunRows(runId, { limit: 300 }));
+      }
     } catch (err) {
       handleError(err, "Failed to load run");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleEstimate() {
+    try {
+      setEstimating(true);
+      setEstimate(await estimateDatasheetExtraction(runId));
+    } catch (err) {
+      handleError(err, "Failed to estimate extraction cost");
+    } finally {
+      setEstimating(false);
+    }
+  }
+
+  async function handleDatasheetDownload() {
+    try {
+      setDownloading(true);
+      const { blob, filename } = await downloadDatasheetCsv(runId);
+      await saveBlob(blob, filename);
+    } catch (err) {
+      handleError(err, "Failed to download the datasheet");
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -99,6 +152,22 @@ export default function AdminDatasheetRunClient({ runId }: { runId: string }) {
       setRun(await cancelDatasheetRun(runId));
     } catch (err) {
       handleError(err, "Failed to cancel run");
+    }
+  }
+
+  async function handleReextract() {
+    try {
+      setReextracting(true);
+      const detail = await reextractDatasheetRun(runId);
+      setRun(detail);
+      // The previous pass's rows are gone server-side; keeping them on screen would
+      // show a datasheet that no longer exists.
+      setRows([]);
+      setEstimate(null);
+    } catch (err) {
+      handleError(err, "Failed to queue a re-extraction");
+    } finally {
+      setReextracting(false);
     }
   }
 
@@ -151,6 +220,15 @@ export default function AdminDatasheetRunClient({ runId }: { runId: string }) {
     (host) => Number(host.requests ?? 0) > 0
   );
   const assistedCount = Number(acquisition?.assisted_pending ?? 0);
+  const extraction = (run?.extraction_summary ?? null) as Record<string, unknown> | null;
+  const extractionPlan = (extraction?.plan ?? null) as Record<string, unknown> | null;
+  // Papers whose result the cache already holds. They produce rows without a call
+  // and are excluded from the projected cost, so saying so is what makes a cheap
+  // projection legible rather than suspicious.
+  const cachedPapers = estimate?.cached ?? Number(extractionPlan?.cached ?? 0);
+  // Column order comes from the rows themselves, which carry the run's frozen
+  // template — not from the live template, which may have moved on since.
+  const rowColumns = useMemo(() => Object.keys(rows[0]?.cells ?? {}), [rows]);
   const sourceCounts = (summary.source_record_counts ?? {}) as Record<string, number>;
   const sourceErrors = (summary.source_errors ?? {}) as Record<string, string>;
 
@@ -194,6 +272,15 @@ export default function AdminDatasheetRunClient({ runId }: { runId: string }) {
                     <span className="font-medium">{run.status}</span>
                     {run.phase ? ` · ${run.phase}` : ""} — {run.error ?? run.progress_message}
                   </p>
+                  {run.status === "awaiting_batch" && (
+                    <p className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                      Parked on extraction batch{" "}
+                      <code className="font-mono">{run.extraction_batch_id}</code>. The worker is
+                      free to run other jobs meanwhile and collects this batch when it ends —
+                      a batch can take up to 24 hours. Cancelling stops the requests that have
+                      not started; anything already in flight still completes and is billed.
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -212,6 +299,35 @@ export default function AdminDatasheetRunClient({ runId }: { runId: string }) {
                       className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Assisted list ({assistedCount})
+                    </button>
+                  )}
+                  {run.row_count > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDatasheetDownload()}
+                      disabled={downloading}
+                      className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-800 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Datasheet CSV ({run.row_count})
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleEstimate()}
+                    disabled={estimating}
+                    className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {estimating ? "Counting..." : "Estimate extraction"}
+                  </button>
+                  {!ACTIVE_STATUSES.has(run.status) && (
+                    <button
+                      type="button"
+                      onClick={() => void handleReextract()}
+                      disabled={reextracting}
+                      title="Re-run extraction only. Discovery and acquisition are kept, and papers whose prompt has not changed come from the result cache."
+                      className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {reextracting ? "Queueing..." : "Re-extract"}
                     </button>
                   )}
                   {ACTIVE_STATUSES.has(run.status) && (
@@ -253,6 +369,128 @@ export default function AdminDatasheetRunClient({ runId }: { runId: string }) {
                   />
                 )}
             </div>
+
+            {(estimate || extraction) && (
+              <div className="rounded-lg border border-gray-200 bg-white">
+                <div className="border-b border-gray-200 px-4 py-3">
+                  <h3 className="text-sm font-semibold text-gray-800">Extraction</h3>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    Extraction is the only phase that sends paper text to the model and the
+                    only one that costs money, so a run reports what it would cost and stops
+                    unless extraction has been explicitly enabled.
+                  </p>
+                </div>
+                {estimate && !estimate.extraction_enabled && (
+                  <p className="mx-4 mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Extraction is disabled. This is a projection only — nothing was sent. Set
+                    DATASHEET_EXTRACTION_ENABLED in the backend environment to run it.
+                  </p>
+                )}
+                <div className="grid gap-3 px-4 py-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <Stat
+                    label="Papers ready"
+                    value={estimate?.papers ?? Number(extractionPlan?.papers ?? 0)}
+                    hint={`${cachedPapers} already extracted · ${estimate?.skipped_no_text ?? extractionPlan?.skipped_no_text ?? 0} have no fetched text`}
+                  />
+                  <Stat
+                    label="Projected cost"
+                    value={`$${(estimate?.projected_cost_usd ?? Number(extractionPlan?.projected_cost_usd ?? 0)).toFixed(2)}`}
+                    hint={
+                      cachedPapers > 0
+                        ? `${estimate?.model ?? extractionPlan?.model ?? ""}, batch rates — ${cachedPapers} cached papers cost nothing`
+                        : `${estimate?.model ?? extractionPlan?.model ?? ""}, batch rates`
+                    }
+                  />
+                  <Stat
+                    label="Input tokens"
+                    value={(estimate?.input_tokens ?? Number(extractionPlan?.input_tokens ?? 0)).toLocaleString()}
+                    hint={
+                      (estimate?.token_method ?? extractionPlan?.token_method) === "provider"
+                        ? "Counted by the model's own tokeniser"
+                        : "Character estimate — no API key available"
+                    }
+                  />
+                  <Stat
+                    label="Rows extracted"
+                    value={run.row_count}
+                    hint={
+                      run.prompt_tokens
+                        ? `${run.prompt_tokens.toLocaleString()} prompt · ${(run.cached_tokens ?? 0).toLocaleString()} cached`
+                        : "No extraction run yet"
+                    }
+                  />
+                </div>
+              </div>
+            )}
+
+            {rows.length > 0 && (
+              <div className="rounded-lg border border-gray-200 bg-white">
+                <div className="border-b border-gray-200 px-4 py-3">
+                  <h3 className="text-sm font-semibold text-gray-800">
+                    Extracted rows ({rows.length})
+                  </h3>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    Hover a value to see the quote it came from. A cell reading &quot;Not
+                    reported&quot; is a fact about the paper, not a gap in the extraction.
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
+                      <tr>
+                        <th className="px-4 py-2">Paper</th>
+                        <th className="px-4 py-2">Tier</th>
+                        {rowColumns.map((key) => (
+                          <th key={key} className="px-4 py-2">
+                            {key}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {rows.map((row) => (
+                        <tr key={row.id} className="align-top">
+                          <td className="max-w-xs px-4 py-2">
+                            <span className="block truncate text-gray-900" title={row.title ?? ""}>
+                              {row.title ?? row.doi ?? "Untitled"}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              {row.journal} {row.year ? `· ${row.year}` : ""}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
+                            <span
+                              className={`rounded px-2 py-0.5 text-xs ${
+                                row.source_tier === "fulltext"
+                                  ? "bg-green-50 text-green-700"
+                                  : "bg-yellow-50 text-yellow-800"
+                              }`}
+                            >
+                              {row.source_tier}
+                            </span>
+                          </td>
+                          {rowColumns.map((key) => {
+                            const cell = row.cells[key];
+                            return (
+                              <td key={key} className="px-4 py-2 text-gray-700">
+                                <span title={cell?.evidence_quote || undefined}>
+                                  {cell?.value ?? "Not reported"}
+                                </span>
+                                {cell && cell.confidence < 0.6 && (
+                                  <span className="ml-1 text-xs text-amber-700">
+                                    ({cell.confidence.toFixed(2)})
+                                  </span>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {sourceRows.length > 0 && (
               <div className="rounded-lg border border-gray-200 bg-white">
@@ -395,6 +633,7 @@ export default function AdminDatasheetRunClient({ runId }: { runId: string }) {
                         <th className="px-4 py-2">Why</th>
                         <th className="px-4 py-2">Flags</th>
                         <th className="px-4 py-2">Status</th>
+                        <th className="px-4 py-2">Extraction</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -476,6 +715,23 @@ export default function AdminDatasheetRunClient({ runId }: { runId: string }) {
                           </td>
                           <td className="px-4 py-2 text-xs text-gray-700">
                             {candidate.acquisition_status}
+                          </td>
+                          <td className="px-4 py-2 text-xs">
+                            {candidate.extraction_status ? (
+                              <span
+                                className={`rounded px-1.5 py-0.5 ${
+                                  EXTRACTION_STYLES[candidate.extraction_status] ??
+                                  "bg-gray-100 text-gray-700"
+                                }`}
+                                // The reason travels with the outcome: "3 failed" with
+                                // no way to learn which three, or why, is not a report.
+                                title={candidate.extraction_error ?? undefined}
+                              >
+                                {candidate.extraction_status}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
                           </td>
                         </tr>
                       ))}

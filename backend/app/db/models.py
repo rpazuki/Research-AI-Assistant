@@ -596,6 +596,9 @@ class DatasheetRun(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     requested_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    # queued|running|awaiting_batch|cancel_requested|succeeded|failed|cancelled.
+    # `awaiting_batch` is a parked run: its extraction batch is with Anthropic and
+    # the worker is free to serve other work until it is time to poll again.
     status = Column(String, nullable=False, default="queued", index=True)
     phase = Column(String)                            # discovery|acquisition|ingestion|extraction|export
     # Round 1 sets 'ingestion' so a run without an extraction pass finishes as
@@ -628,6 +631,16 @@ class DatasheetRun(Base):
     completion_tokens = Column(Integer)
     cached_tokens = Column(Integer)
 
+    # ── Extraction batch lifecycle ────────────────────────────────────────────
+    # A column and not a config_snapshot key: the worker's claim query filters on
+    # it, and a paid batch whose id lives only in a local variable is lost the
+    # moment the worker restarts.
+    extraction_batch_id = Column(String)
+    extraction_batch_submitted_at = Column(DateTime(timezone=True))
+    # Last time the batch was polled. Throttles re-claiming a parked run — without
+    # it the worker re-claims the same run every loop and hammers the endpoint.
+    extraction_batch_polled_at = Column(DateTime(timezone=True))
+
     progress_message = Column(Text)
     log_tail = Column(Text)
     error = Column(Text)
@@ -640,6 +653,7 @@ class DatasheetRun(Base):
     candidates = relationship(
         "DatasheetCandidate", back_populates="run", cascade="all, delete-orphan"
     )
+    rows = relationship("DatasheetRow", back_populates="run", cascade="all, delete-orphan")
 
 
 class DatasheetCandidate(Base):
@@ -675,6 +689,12 @@ class DatasheetCandidate(Base):
     relevance_reason = Column(Text)
     acquisition_route = Column(String)
     acquisition_status = Column(String, nullable=False, default="pending", index=True)
+    # extracted|cached|refused|failed|no_text|over_cap. NULL means never attempted.
+    # A paper that fails extraction has no datasheet_rows row by design — an empty
+    # row would be a fabricated line in the datasheet — so this is the only place
+    # the reason for a missing row can live.
+    extraction_status = Column(String)
+    extraction_error = Column(Text)
     resolver_url = Column(Text)
     asset_path = Column(Text)
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"))
@@ -688,3 +708,168 @@ class DatasheetCandidate(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     run = relationship("DatasheetRun", back_populates="candidates")
+
+
+# ── Datasheet extraction (round 2) ────────────────────────────────────────────
+# One row per paper. The Excel this feature reproduces is one row per paper — its
+# 10 duplicate links are accidental re-curations, not per-compound splits — so the
+# unique constraint below is a property of the source data, not a simplification.
+
+class DatasheetRow(Base):
+    __tablename__ = "datasheet_rows"
+    __table_args__ = (
+        UniqueConstraint("run_id", "candidate_id", name="uq_datasheet_rows_run_candidate"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("datasheet_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    candidate_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("datasheet_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"))
+    # {column_key: {value, confidence, evidence_quote, evidence_section, source_tier}}
+    # Provenance per cell is what makes a value auditable against the gold set;
+    # a bare value would be indistinguishable from a guess.
+    cells = Column(JSONB, nullable=False)
+    # Best tier the extraction actually had: fulltext|abstract|metadata|none.
+    # Reported per row so a thin row is visibly thin rather than silently wrong.
+    source_tier = Column(String, nullable=False)
+    extraction_model = Column(String)
+    template_version = Column(Integer)
+    prompt_tokens = Column(Integer)
+    completion_tokens = Column(Integer)
+    review_status = Column(String, nullable=False, default="unreviewed")  # unreviewed|accepted|corrected
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+    run = relationship("DatasheetRun", back_populates="rows")
+    candidate = relationship("DatasheetCandidate")
+    numeric_claims = relationship(
+        "DatasheetNumericClaim", back_populates="row", cascade="all, delete-orphan"
+    )
+
+
+class DatasheetNumericClaim(Base):
+    """One measured quantity, parsed out of a row's prose (D11).
+
+    Vector search cannot rank numbers: "highest lupeol titre" is a comparison, not
+    a similarity. `value_si` is NULL whenever bases are not comparable — a g/L and
+    a mg/g figure are different measurements, and coercing one into the other
+    would invent a ranking that the papers do not support.
+    """
+
+    __tablename__ = "datasheet_numeric_claims"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    row_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("datasheet_rows.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    compound = Column(String)
+    compound_normalized = Column(String, index=True)
+    value_min = Column(Float)
+    value_max = Column(Float)
+    unit_raw = Column(String)
+    unit_canonical = Column(String)     # g/L | mg/g | %_dcw | mL/gVS | g/L/h ...
+    basis = Column(String)              # per_volume|per_biomass|per_substrate|percent|rate|absolute
+    value_si = Column(Float)            # NULL when bases are not comparable
+    comparable = Column(Boolean, nullable=False, default=False)
+    qualifier = Column(String)          # max|titre|yield|productivity
+    cultivation_mode = Column(String)
+    scale = Column(String)
+    evidence_quote = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    row = relationship("DatasheetRow", back_populates="numeric_claims")
+
+
+class DatasheetExtractionCache(Base):
+    """One extraction result, reusable by any run that would send the same prompt.
+
+    The key is the sha256 of the **exact text sent**, not of the document: change
+    section selection or the token budget and the prompt changes, so the cache
+    correctly misses rather than serving a result the current code would not have
+    produced. `template_version` and `model` complete the key for the same reason.
+
+    Not scoped to a run. The case that actually saves money is a *second* run whose
+    seed overlaps the first — a per-run artefact would only help re-running the
+    same run.
+    """
+
+    __tablename__ = "datasheet_extraction_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "content_sha256", "template_version", "model", name="uq_datasheet_extraction_cache_key"
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    content_sha256 = Column(String(64), nullable=False)
+    template_version = Column(Integer, nullable=False)
+    model = Column(String, nullable=False)
+    cells = Column(JSONB, nullable=False)
+    prompt_tokens = Column(Integer)
+    completion_tokens = Column(Integer)
+    # Cells this entry owes to the escalation model. The key carries the bulk model
+    # only, so changing DATASHEET_ESCALATION_MODEL does not invalidate an entry —
+    # this keeps what produced it visible rather than implicit.
+    escalated_cells = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class DatasheetGoldRow(Base):
+    """A curated row from the existing spreadsheet, for scoring extraction (D7)."""
+
+    __tablename__ = "datasheet_gold_rows"
+    __table_args__ = (
+        UniqueConstraint("source", "link", name="uq_datasheet_gold_rows_source_link"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    template_id = Column(UUID(as_uuid=True), ForeignKey("datasheet_templates.id", ondelete="SET NULL"))
+    source = Column(String, nullable=False)   # 'excel:Yarrowia lipolytica Datasheet(2016-2026).xlsx'
+    doi = Column(String, index=True)
+    pmid = Column(String)
+    link = Column(Text)
+    cells = Column(JSONB, nullable=False)     # {column_key: raw curated string}
+    imported_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class DatasheetGoldScore(Base):
+    """Per-column accuracy for one run, by one scoring method.
+
+    `method` is part of the unique key so a token-recall score and an LLM-judge
+    score coexist rather than overwriting each other — they measure different
+    things and the plan keeps token recall as the comparable primary metric.
+    """
+
+    __tablename__ = "datasheet_gold_scores"
+    __table_args__ = (
+        UniqueConstraint("run_id", "column_key", "method", name="uq_datasheet_gold_scores_key"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("datasheet_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    column_key = Column(String, nullable=False)
+    matched = Column(Integer, nullable=False, default=0)
+    partial = Column(Integer, nullable=False, default=0)
+    missed = Column(Integer, nullable=False, default=0)
+    not_in_gold = Column(Integer, nullable=False, default=0)
+    score = Column(Float)
+    method = Column(String, nullable=False)   # token_recall|llm_judge
+    detail = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)

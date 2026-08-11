@@ -503,11 +503,12 @@ GET    /runs/{id}                     POST  /runs/{id}/cancel
 GET    /runs/{id}/candidates          GET   /runs/{id}/manifest.csv
 GET    /runs/{id}/acquisition-links.csv
 ```
-Round 2:
+Round 2 (✅ = built; `/runs/{id}/csv` shipped as `/runs/{id}/datasheet.csv`):
 ```
-GET    /runs/{id}/rows                GET   /runs/{id}/csv
-POST   /runs/{id}/reextract           POST  /runs/{id}/score
-POST   /gold/import                   GET   /gold/scores?run_id=
+GET    /runs/{id}/rows            ✅   GET   /runs/{id}/datasheet.csv        ✅
+POST   /runs/{id}/reextract       ✅   POST  /runs/{id}/extraction-estimate  ✅
+POST   /runs/{id}/score                POST  /gold/import
+GET    /gold/scores?run_id=
 ```
 
 ---
@@ -837,7 +838,48 @@ the fact.
 
 | Step | Work | Acceptance |
 |---|---|---|
-| **S5** | Round-2 migration (4 tables); provider `*_batch` methods; extraction pass + `datasheet_rows` + datasheet CSV + row table UI; dry-run cost mode | CSV opens in Excel with the 17 headers in the original order; provenance columns populated; dry-run reports projected cost and stops; token counters recorded per run |
+| **S5** ✅ | Round-2 migration (4 tables); provider `extract_structured` + `*_batch` + `count_prompt_tokens`; `pipelines/extraction/{sections,csv_writer}.py`; `app/datasheet/{extractor,export_service}.py`; worker phase D; rows/CSV/estimate API + run-page UI | **Met, 2026-08-07.** CSV renders the enabled template columns in spreadsheet order then the provenance block, `Not reported` for empty cells; dry run reports projected cost and stops; token counters recorded per run from actual usage |
+| **S5a** ✅ | Batch lifecycle hardening: migration 0011, `cancel_batch`, park-and-re-claim (`awaiting_batch`), result cache, per-candidate outcome, `reextract`, `stop_after_phase` | **Met, 2026-08-11.** A live run can be cancelled without leaking a paid batch, survives a worker restart, leaves the ingestion queue usable while a batch runs, re-runs at near-zero cost for unchanged papers, and reports which papers failed and why. See the S5a table below |
+
+**S5 decisions and corrections to this plan.**
+
+| Claim in this plan | As built |
+|---|---|
+| `claude-sonnet-5` bulk + `claude-opus-5` escalation (open item (c)) | Confirmed as the default (2026-08-07). Escalation re-asks *only* the flagged columns rather than re-extracting the paper, and is capped by **cell** count (`datasheet_escalation_max_fraction`, default 10%) rather than by paper |
+| "confirm before Step 4 runs on the real corpus" (open item (b)) | Enforced in code, not by convention: `DATASHEET_EXTRACTION_ENABLED` defaults to **false**, and a run with it off still reaches phase D to report a projection and stop. A caller cannot override it by passing `dry_run=False` |
+| `~$19/full run` | S4 measured 8,350 tokens/paper against the plan's 24,000. On Sonnet 5 batch intro rates the same 700 papers project at **≈$11** (input ≈$5.8 + output ≈$5.3), and the dry run reports the real figure per run |
+| Sampling parameters on the extraction call | Removed, and the chat path is now model-gated too. `temperature`/`top_p`/`top_k` are rejected with a 400 by Claude 5 models, so `AnthropicProvider.sampling_params()` drops them for any `-(opus\|sonnet\|haiku\|fable)-5+` model and keeps them for 4-series. Moving `LLM_MODEL` to Claude 5 is a config change, not a code change |
+| Phase E ("export") | Built as a real phase, not a status label: `export_service.run_export_phase` writes `<run>/datasheet.csv` and records `csv_path` repo-relative, so a run's deliverable exists on disk beside the assets it came from. The HTTP download still renders from the rows on demand |
+| Progress from phase D to completion | Reported line by line onto the run (`progress_message` + `log_tail`): token counting, batch submitted, per-poll `N done / M processing`, escalation, row count, export path. A batch can run for an hour, and a single unchanging message for that long is indistinguishable from a hung worker — which invites a restart mid-batch |
+| `stop_after_phase` | New runs are created with `export`. Round-1 rows carry `ingestion` and still finish after acquisition, so an already-completed run does not change meaning when round 2 lands |
+| §7.0's "second pass over the remaining sections" for over-cap papers | Not built. `sections.remaining_sections()` returns the input it needs and the cap did not engage on any S4-measured paper; wiring it before it is observed to matter would be speculative |
+
+**S5a — hardening the live path (2026-08-11).** S5 shipped correct for the happy path with
+extraction switched off. Four holes only bite once `DATASHEET_EXTRACTION_ENABLED` is on, which is
+why they were closed before it is:
+
+| Hole | As fixed |
+|---|---|
+| A cancelled run leaked a paid batch — nothing called `batches.cancel` | `LLMProvider.cancel_batch`, called from both cancellation paths: `request_cancel` (a parked run is not `running`, so no worker would ever look at it again) and the worker's collect path. Best-effort by contract: requests already in flight finish and are still billed, and the log says so rather than implying a refund. The batch id stays on the row so an uncollectable charge is named |
+| A worker restart orphaned a paid batch — `batch_id` was a local variable | `datasheet_runs.extraction_batch_id` (+ `submitted_at`, `polled_at`), migration 0011. A column, not a `config_snapshot` key: the claim query filters on it |
+| The 1–24h batch poll blocked the ingestion queue the same process serves (§6.5) | New status `awaiting_batch`. Submitting parks the run and returns; `claim_next_run` also takes parked runs whose `extraction_batch_polled_at` is older than `DATASHEET_BATCH_POLL_INTERVAL_S`, and collection polls **once**. A still-processing batch re-parks and reports "no work" so the loop sleeps instead of spinning. Resume needs no extra state: `plan_extraction` is deterministic over the candidates and cached payloads, and `custom_id` *is* the candidate id, so results match by identifier and never by position |
+| §7.2 lever 3 (result cache) was never built | `datasheet_extraction_cache`, keyed `(content_sha256, template_version, model)` where the hash is of the **exact prompt text sent**, not of the document — change section selection or the budget and the cache correctly misses. Hits produce rows without a call and are excluded from the projected cost, so a dry run answers "what will this cost me now". Entries are written *after* escalation, so a re-run inherits the escalated values. Recorded trade-off: the key carries the bulk model only, so changing `DATASHEET_ESCALATION_MODEL` alone does not invalidate an entry; `escalated_cells` is stored so that stays visible |
+
+Two operator gaps closed alongside them:
+
+- **Failure attribution.** `datasheet_candidates.extraction_status` (`extracted | cached | refused |
+  failed | no_text | over_cap`) and `extraction_error`. A failed paper has no `datasheet_rows` row
+  by design — an empty row would be a fabricated line in the datasheet — so the candidate is the
+  only place its reason can live. `3 failed` with no way to learn which three is not a report.
+  Shown as a column on the run page, with the reason as its tooltip.
+- **`POST /runs/{id}/reextract`** (§6's round-2 API list): clears the run's rows, resets the
+  candidates' extraction fields and the batch columns, and re-queues with `phase='extraction'` —
+  which is the worker's "start at D" signal, since a normal queued run has `phase = NULL`. With the
+  result cache, a corrected extraction hint re-sends only the papers it actually affected. Refused
+  with a 409 while the run is still active rather than racing the worker.
+- **`stop_after_phase` on run creation** (`discovery | acquisition | export`, default `export`).
+  Now that runs default to going the whole way, this is the only way to queue a discovery-only run
+  and review the manifest before anything is fetched.
 | **S6** | Numeric sidecar + comparative query path | "Highest lupeol titre" answers from `datasheet_numeric_claims`, not vector similarity; non-comparable bases reported as non-comparable rather than coerced to a fake SI value |
 | **S7** | Gold import + per-column scoring + optional eval-question bridge | Per-column accuracy against the 90.9% ceiling, by the same token-recall method as `yarrowia_report.py` so numbers stay comparable; scores stored per run |
 | **S8** | Refresh loop: re-check prior misses, retraction re-check, preprint→VoR promotion | A second run on the same seed reports new/changed/retracted deltas rather than re-fetching |

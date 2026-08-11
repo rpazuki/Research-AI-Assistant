@@ -715,6 +715,9 @@ export interface DatasheetRunCreate {
   year_from?: number | null;
   year_to?: number | null;
   template_name?: string;
+  // How far the run goes. "discovery" stops after the manifest, which is how a
+  // curator reviews what was found before anything is fetched.
+  stop_after_phase?: "discovery" | "acquisition" | "export";
   sources?: string[];
   max_records_per_source?: number;
   include_mentions?: boolean;
@@ -725,8 +728,12 @@ export interface DatasheetRunCreate {
 export interface DatasheetRunSummary {
   id: string;
   name: string;
+  // queued | running | awaiting_batch | cancel_requested | succeeded | failed |
+  // cancelled. "awaiting_batch" is parked, not stalled: the extraction batch is
+  // with the provider and the worker is serving other jobs meanwhile.
   status: string;
   phase: string | null;
+  stop_after_phase: string | null;
   seed_kind: string;
   organism_name: string | null;
   organism_taxid: number | null;
@@ -764,7 +771,19 @@ export interface DatasheetRunDetail extends DatasheetRunSummary {
   candidate_counts: Record<string, number>;
   discovery_summary: Record<string, unknown> | null;
   acquisition_summary: Record<string, unknown> | null;
+  // Present once phase D has run. `dry_run` distinguishes a projection from a
+  // real pass, so an empty datasheet is explained rather than mysterious.
+  extraction_summary: Record<string, unknown> | null;
   acquired_count: number | null;
+  extracted_count: number | null;
+  row_count: number;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  cached_tokens: number | null;
+  // Set while a batch is outstanding. Shown so a parked run names the batch it is
+  // waiting on — that id is what makes a charge traceable.
+  extraction_batch_id: string | null;
+  extraction_batch_submitted_at: string | null;
 }
 
 export interface DatasheetCandidate {
@@ -789,8 +808,71 @@ export interface DatasheetCandidate {
   relevance_reason: string | null;
   acquisition_status: string;
   acquisition_route: string | null;
+  // extracted | cached | refused | failed | no_text | over_cap, or null when
+  // extraction has not looked at this paper. A paper that failed extraction has no
+  // datasheet row, so this is the only place its reason appears.
+  extraction_status: string | null;
+  extraction_error: string | null;
   dedupe_group: string | null;
   possible_duplicate_of: string[];
   duplicate_evidence: string | null;
   notes: string | null;
+}
+
+// Datasheet extraction (round 2)
+
+export interface DatasheetCell {
+  value: string;
+  confidence: number;
+  // The verbatim span the value came from. A cell without its evidence is
+  // indistinguishable from a guess, which is why the reviewer sees both.
+  evidence_quote: string;
+  evidence_section: string;
+  source_tier?: string;
+  escalated?: boolean;
+}
+
+export interface DatasheetRow {
+  id: string;
+  candidate_id: string;
+  title: string | null;
+  cells: Record<string, DatasheetCell>;
+  // How much of the paper the extraction actually had: fulltext | abstract |
+  // metadata | none.
+  source_tier: string;
+  extraction_model: string | null;
+  template_version: number | null;
+  review_status: string;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  doi: string | null;
+  pmid: string | null;
+  journal: string | null;
+  publisher: string | null;
+  year: number | null;
+  oa_status: string | null;
+  doc_type: string | null;
+  is_review: boolean;
+  is_retracted: boolean;
+  acquisition_route: string | null;
+  acquisition_status: string | null;
+}
+
+export interface DatasheetExtractionEstimate {
+  // False means a queued run reports this projection and stops.
+  extraction_enabled: boolean;
+  papers: number;
+  // Already in the result cache: rows without a call, and excluded from the
+  // projected cost — the projection answers "what will this cost me now".
+  cached: number;
+  to_extract: number;
+  input_tokens: number;
+  assumed_output_tokens: number;
+  token_method: string;
+  model: string;
+  projected_cost_usd: number;
+  skipped_no_text: number;
+  skipped_over_cap: number;
+  truncated: number;
+  median_tokens_per_paper: number;
 }
